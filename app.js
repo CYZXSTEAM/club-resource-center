@@ -12,7 +12,7 @@
   var currentPath = null;       /* 当前浏览的 Koofr 文件夹路径；null 表示首页 */
   var currentFiles = [];        /* 当前文件夹的文件列表 */
   var previewObjectUrl = null;  /* 预览中的 blob URL */
-  var memoryAuth = null;        /* sessionStorage 不可用时的兜底 */
+  var memoryAuth = null;        /* 内存中的登录凭据，刷新即清 */
   var queueRows = {};           /* uid -> { name, bar, status } */
   var queueUid = 0;
   var bannerTimer = null;
@@ -36,25 +36,18 @@
   var uploadQueue = $("uploadQueue");
   var modalRoot = $("modalRoot");
 
-  /* ================= 登录凭据（仅存当前会话） ================= */
+  /* ================= 登录凭据（仅存内存，刷新即清） ================= */
 
   function getAuth() {
-    try {
-      var raw = sessionStorage.getItem(AUTH_KEY);
-      if (raw) return JSON.parse(raw);
-    } catch (e) { /* 隐私模式等场景忽略 */ }
     return memoryAuth;
   }
 
   function saveAuth(email, password) {
     var b64 = btoa(unescape(encodeURIComponent(email + ":" + password)));
-    var data = { email: email, b64: b64 };
-    try { sessionStorage.setItem(AUTH_KEY, JSON.stringify(data)); } catch (e) { /* 忽略 */ }
-    memoryAuth = data;
+    memoryAuth = { email: email, b64: b64 };
   }
 
   function clearAuth() {
-    try { sessionStorage.removeItem(AUTH_KEY); } catch (e) { /* 忽略 */ }
     memoryAuth = null;
   }
 
@@ -682,6 +675,8 @@
   /* ================= 初始化 ================= */
 
   function init() {
+    /* 每次进入页面都要求重新登录：清掉旧版本可能残留的会话凭据 */
+    try { sessionStorage.removeItem(AUTH_KEY); } catch (e) { /* 忽略 */ }
     $("brandTitle").textContent = CONFIG.siteTitle || "社团资源库";
     document.title = CONFIG.siteTitle || "社团资源库";
     $("loginForm").addEventListener("submit", doLogin);
@@ -692,9 +687,16 @@
       showLogin("已退出登录");
     });
     initUpload();
-    if (getAuth()) enterHome();
-    else showLogin();
+    showLogin();
   }
 
   document.addEventListener("DOMContentLoaded", init);
+
+  /* 浏览器后退/前进恢复页面时也强制重新登录 */
+  window.addEventListener("pageshow", function (e) {
+    if (e.persisted) {
+      clearAuth();
+      showLogin();
+    }
+  });
 })();
