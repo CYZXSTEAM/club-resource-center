@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>社团资源库</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">📚 <span id="brandTitle">社团资源库</span></div>
+    <button id="logoutBtn" class="btn ghost" hidden>退出登录</button>
+  </header>
+
+  <main class="container">
+    <!-- 登录界面：没有密码看不到任何数据 -->
+    <section id="loginView" class="login-wrap" hidden>
+      <form id="loginForm" class="login-card" novalidate>
+        <h1>📚 社团资源库</h1>
+        <p class="login-hint">请输入社团共享的 Koofr 邮箱与应用密码</p>
+        <label class="field">
+          <span>邮箱</span>
+          <input id="loginEmail" type="email" autocomplete="username" placeholder="club@example.com" required>
+        </label>
+        <label class="field">
+          <span>应用密码</span>
+          <input id="loginPassword" type="password" autocomplete="current-password" placeholder="请输入应用密码" required>
+        </label>
+        <p id="loginError" class="login-error" hidden></p>
+        <button id="loginBtn" type="submit" class="btn primary block">进入资源库</button>
+        <p class="login-foot">密码仅保存在当前浏览器会话中，关闭页面即失效</p>
+      </form>
+    </section>
+
+    <!-- 主界面 -->
+    <section id="mainView" hidden>
+      <div id="banner" class="banner" hidden><span id="bannerText"></span></div>
+      <nav id="breadcrumb" class="breadcrumb" aria-label="路径"></nav>
+
+      <!-- 上传区：仅进入文件夹后显示 -->
+      <div id="uploadArea" class="upload-area" hidden>
+        <div id="uploadZone" class="upload-zone" role="button" tabindex="0">
+          <span>⬆️ 拖拽文件到此处，或点击选择文件（可多选）</span>
+          <input id="fileInput" type="file" multiple hidden>
+        </div>
+        <div id="uploadQueue" class="upload-queue" hidden></div>
+      </div>
+
+      <div id="content" class="content"></div>
+    </section>
+  </main>
+
+  <div id="modalRoot"></div>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
