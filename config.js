@@ -15,6 +15,9 @@ window.CLUB_CONFIG = {
   /* 页面标题（显示在浏览器标签和页面顶部） */
   siteTitle: "社团资源库",
 
+  /* 顶栏搜索框占位文案 */
+  searchPlaceholder: "搜索文件名…",
+
   /* 首页分类卡片：folder 是 Koofr 中对应分类子文件夹的名字
    * 需要先在 Koofr 网页端创建这些文件夹（见 README 部署步骤） */
   categories: [

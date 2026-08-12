@@ -9,8 +9,15 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">📚 <span id="brandTitle">社团资源库</span></div>
-    <button id="logoutBtn" class="btn ghost" hidden>退出登录</button>
+    <button class="brand" id="brandTitle" title="返回最近更新">📚 社团资源库</button>
+    <div class="search-wrap" id="searchWrap">
+      <input type="search" id="globalSearch" placeholder="搜索文件名…" autocomplete="off">
+      <div class="search-panel hidden" id="searchPanel"></div>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn ghost" id="treeToggle" hidden>☰ 目录</button>
+      <button class="btn ghost" id="logoutBtn" hidden>退出登录</button>
+    </div>
   </header>
 
   <main class="container">
@@ -36,24 +43,39 @@
     <!-- 主界面 -->
     <section id="mainView" hidden>
       <div id="banner" class="banner" hidden><span id="bannerText"></span></div>
-      <nav id="breadcrumb" class="breadcrumb" aria-label="路径"></nav>
+      <div class="layout">
+        <div id="sidebarMask" class="sidebar-mask" hidden></div>
+        <aside class="sidebar" id="sidebar">
+          <div class="sidebar-head"><span>📂 目录</span></div>
+          <nav id="tree" class="tree" aria-label="目录树"></nav>
+        </aside>
+        <main class="content-pane">
+          <!-- 上传面板：登录后常驻，可切换/新建目标文件夹 -->
+          <div id="uploadArea" class="upload-area" hidden>
+            <div class="upload-toolbar">
+              <label class="folder-pick">
+                <span>上传到：</span>
+                <select id="folderSelect"></select>
+              </label>
+              <button class="btn small" id="newFolderBtn">＋ 新建文件夹</button>
+            </div>
+            <div id="uploadZone" class="upload-zone" role="button" tabindex="0">
+              <span>⬆️ 拖拽文件到此处，或点击选择文件（可多选）</span>
+              <input id="fileInput" type="file" multiple hidden>
+            </div>
+            <div id="uploadQueue" class="upload-queue" hidden></div>
+          </div>
 
-      <!-- 上传区：仅进入文件夹后显示 -->
-      <div id="uploadArea" class="upload-area" hidden>
-        <div id="uploadZone" class="upload-zone" role="button" tabindex="0">
-          <span>⬆️ 拖拽文件到此处，或点击选择文件（可多选）</span>
-          <input id="fileInput" type="file" multiple hidden>
-        </div>
-        <div id="uploadQueue" class="upload-queue" hidden></div>
+          <nav id="breadcrumb" class="breadcrumb" aria-label="路径"></nav>
+          <div id="content" class="content"></div>
+        </main>
       </div>
-
-      <div id="content" class="content"></div>
     </section>
   </main>
 
   <div id="modalRoot"></div>
 
-  <script src="config.js?v=2"></script>
-  <script src="app.js?v=2"></script>
+  <script src="config.js?v=3"></script>
+  <script src="app.js?v=3"></script>
 </body>
 </html>
