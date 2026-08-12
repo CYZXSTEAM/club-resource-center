@@ -102,6 +102,7 @@ README.md      本文档
 ### 实测记录
 
 - 若报错 `mountId: invalid mountable (expected primary or UUID)`：检查 `config.js` 里的 `mountId`，主存储应填 `"primary"`，不要填 `"Koofr"`。
+- 刷新后仍显示旧内容或旧界面：浏览器缓存了旧版文件，请按 Ctrl+F5（Mac 为 Cmd+Shift+R）强制刷新；部署到 GitHub Pages 后需等 1–2 分钟再访问。
 
 | 项目                    | 结果  |
 | --------------------- | --- |
@@ -119,6 +120,7 @@ README.md      本文档
 - [ ] 下载的文件内容与大小正确
 - [ ] 图片和 PDF 预览正常
 - [ ] 退出登录后刷新页面回到登录界面
+- [ ] 刷新页面后回到登录界面，且看不到任何资源
 - [ ] 断网时给出明确提示
 
 ## 后续（v2 候选）

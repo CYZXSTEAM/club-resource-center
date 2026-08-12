@@ -236,9 +236,16 @@
   /* ================= 视图切换 ================= */
 
   function showLogin(message) {
+    currentPath = null;
+    currentFiles = [];
     loginView.hidden = false;
     mainView.hidden = true;
     $("logoutBtn").hidden = true;
+    breadcrumb.innerHTML = "";
+    content.innerHTML = "";
+    uploadArea.hidden = true;
+    uploadQueue.hidden = true;
+    uploadQueue.innerHTML = "";
     hideBanner();
     setLoginError(message || "");
   }
@@ -677,6 +684,7 @@
   function init() {
     /* 每次进入页面都要求重新登录：清掉旧版本可能残留的会话凭据 */
     try { sessionStorage.removeItem(AUTH_KEY); } catch (e) { /* 忽略 */ }
+    clearAuth();
     $("brandTitle").textContent = CONFIG.siteTitle || "社团资源库";
     document.title = CONFIG.siteTitle || "社团资源库";
     $("loginForm").addEventListener("submit", doLogin);

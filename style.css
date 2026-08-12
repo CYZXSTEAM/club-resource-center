@@ -14,6 +14,9 @@
 
 * { box-sizing: border-box; }
 
+/* 保证 hidden 属性永远生效，不被其他 display 规则覆盖 */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   padding: 0;
