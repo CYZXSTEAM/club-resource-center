@@ -5,8 +5,9 @@ window.CLUB_CONFIG = {
   /* Koofr API 地址，一般不需要改 */
   koofrBase: "https://app.koofr.net",
 
-  /* Koofr 挂载点 ID，默认账号是 "Koofr"，一般不需要改 */
-  mountId: "Koofr",
+  /* Koofr 挂载点 ID：主存储固定为 "primary"（也可填 GET /api/v2.1/mounts
+   * 返回的某个挂载点 UUID）。注意不是 WebDAV 路径里的 "Koofr"。 */
+  mountId: "primary",
 
   /* 资源库在 Koofr 中的根文件夹路径（必须以 / 开头） */
   rootPath: "/社团资源库",

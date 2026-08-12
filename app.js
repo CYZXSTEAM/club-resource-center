@@ -4,7 +4,7 @@
 
   var CONFIG = window.CLUB_CONFIG || {};
   var BASE = CONFIG.koofrBase || "https://app.koofr.net";
-  var MOUNT = CONFIG.mountId || "Koofr";
+  var MOUNT = CONFIG.mountId || "primary";
   var ROOT = CONFIG.rootPath || "/社团资源库";
   var AUTH_KEY = "club_koofr_auth";
   var PREVIEW_EXT = { pdf: 1, jpg: 1, jpeg: 1, png: 1, gif: 1, webp: 1, bmp: 1, svg: 1 };

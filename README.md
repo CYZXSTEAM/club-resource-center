@@ -101,6 +101,8 @@ README.md      本文档
 
 ### 实测记录
 
+- 若报错 `mountId: invalid mountable (expected primary or UUID)`：检查 `config.js` 里的 `mountId`，主存储应填 `"primary"`，不要填 `"Koofr"`。
+
 | 项目                    | 结果  |
 | --------------------- | --- |
 | 单文件上限（请实测）            | 待填写 |
