@@ -12,7 +12,7 @@
   var SEARCH_LIMIT = 50;
 
   var state = {
-    selectedPath: null,   /* null 表示根节点（右侧显示最近更新） */
+    selectedPath: null,   /* null 表示根节点（右侧显示主页） */
     currentFiles: [],
     treeCache: {},        /* path -> 子文件夹数组；undefined 表示未加载 */
     expanded: {}          /* path -> false | "open" | "loading" */
@@ -556,7 +556,7 @@
     closeDrawer();
     renderBreadcrumb();
     fillFolderSelect(ROOT);
-    loadRecent();
+    loadHome();
   }
 
   async function selectFolder(path) {
@@ -585,7 +585,7 @@
     var btn = content.querySelector("[data-reload]");
     if (!btn) return;
     btn.addEventListener("click", function () {
-      if (state.selectedPath === null) loadRecent();
+      if (state.selectedPath === null) loadHome();
       else selectFolder(state.selectedPath);
     });
   }
@@ -594,12 +594,12 @@
 
   function renderBreadcrumb() {
     if (state.selectedPath === null) {
-      breadcrumb.innerHTML = '<span class="crumb current">🏠 最近更新</span>';
+      breadcrumb.innerHTML = '<span class="crumb current">🏠 主页</span>';
       return;
     }
     var rel = state.selectedPath.slice(ROOT.length).split("/").filter(Boolean);
     var acc = ROOT;
-    var html = '<button class="crumb-link" data-root="1">🏠 最近更新</button>' +
+    var html = '<button class="crumb-link" data-root="1">🏠 主页</button>' +
       '<span class="crumb-sep">/</span>' +
       '<span class="crumb current">' + esc(fileName(ROOT)) + '</span>';
     rel.forEach(function (seg, i) {
@@ -621,43 +621,84 @@
 
   /* ================= 右侧内容 ================= */
 
-  function loadRecent() {
-    content.innerHTML = '<div class="loading">正在读取最近更新…</div>';
-    listRecursiveFiles(ROOT).then(function (items) {
-      var files = items.filter(function (it) { return it.relPath !== "/"; });
-      files.sort(function (a, b) { return b.modified - a.modified; });
-      files = files.slice(0, RECENT_LIMIT);
-      renderRecent(files);
+  function loadHome() {
+    content.innerHTML = '<div class="loading">正在加载主页…</div>';
+    Promise.all([
+      ensureTreeChildren(ROOT),
+      listRecursiveFiles(ROOT)
+    ]).then(function (results) {
+      var dirs = results[0];
+      var items = results[1].filter(function (it) { return it.relPath !== "/"; });
+      return loadFolderCounts(dirs).then(function (cards) {
+        renderHome(cards, items);
+      });
     }).catch(function (err) {
       if (err.auth) return;
-      content.innerHTML = '<div class="error-box">读取最近更新失败：' + esc(friendlyError(err)) +
+      content.innerHTML = '<div class="error-box">加载主页失败：' + esc(friendlyError(err)) +
         '<br><button class="btn" data-reload="1">重试</button></div>';
       wireReload();
     });
   }
 
-  function renderRecent(files) {
-    if (!files.length) {
-      content.innerHTML = '<div class="empty">📂 资源库还没有文件，把文件拖到上方上传区。</div>';
-      return;
-    }
-    var rows = files.map(function (f) {
-      var absPath = ROOT + f.relPath;
-      var dirPath = dirOf(absPath);
-      return '<div class="file-row recent">' +
-        '<span class="file-icon">' + fileIcon(f.name) + '</span>' +
-        '<button class="file-name" data-open="' + esc(dirPath) + '">' + esc(f.name) + '</button>' +
-        '<span class="file-path">' + esc(relPath(dirPath)) + '</span>' +
-        '<span class="file-meta">' + fmtTime(f.modified) + '</span>' +
-        '<span class="file-actions">' +
-        (isPreviewable(f.name) ? '<button class="btn small" data-preview="' + esc(absPath) + '">预览</button>' : "") +
-        '<button class="btn small" data-download="' + esc(absPath) + '">下载</button>' +
-        '</span></div>';
-    }).join("");
+  function loadFolderCounts(dirs) {
+    return Promise.all(dirs.map(function (d) {
+      return listFolder(d.path).then(function (files) {
+        return {
+          name: d.name,
+          path: d.path,
+          icon: treeIcon(d.name),
+          count: files.filter(function (f) { return f.type === "file"; }).length
+        };
+      }).catch(function () {
+        return { name: d.name, path: d.path, icon: treeIcon(d.name), count: null };
+      });
+    }));
+  }
+
+  function renderHome(cards, items) {
+    var updates = items.slice().sort(function (a, b) { return b.modified - a.modified; }).slice(0, RECENT_LIMIT);
+    var cardHtml = cards.length
+      ? cards.map(function (c) {
+          return '<button class="subject-card" data-open="' + esc(c.path) + '">' +
+            '<div class="sc-icon">' + c.icon + '</div>' +
+            '<div class="sc-name">' + esc(c.name) + '</div>' +
+            '<div class="sc-meta">' + (c.count === null ? "文件数未知" : c.count + " 个文件") + '</div>' +
+            '</button>';
+        }).join("")
+      : '<div class="empty">根目录下还没有文件夹，先在上方上传面板新建一个。</div>';
+    var updateHtml = updates.length
+      ? updates.map(function (u) {
+          var absPath = ROOT + u.relPath;
+          var dirPath = dirOf(absPath);
+          var chip = relPath(dirPath) || "根目录";
+          return '<button class="update-card" data-open="' + esc(dirPath) + '">' +
+            '<span class="chip">' + esc(chip) + '</span>' +
+            '<div class="update-info">' +
+            '<div class="update-title">' + esc(u.name) + '</div>' +
+            '<div class="update-meta">📄 文件 · ' + fmtSize(u.size) + ' · ' + fmtTime(u.modified) + '</div>' +
+            '</div>' +
+            '<span class="go">→</span></button>';
+        }).join("")
+      : '<div class="empty">暂无资料更新</div>';
     content.innerHTML =
-      '<div class="section-head"><h2>最近更新</h2><span>全库按修改时间排序，前 ' + RECENT_LIMIT + ' 条</span></div>' +
-      '<div class="file-list">' + rows + '</div>';
-    wireFileActions();
+      '<div class="home-layout">' +
+      '<div class="home-left">' +
+      '<div class="section-head"><h2>文件夹</h2><span>点击进入</span></div>' +
+      '<div class="subject-grid">' + cardHtml + '</div>' +
+      '</div>' +
+      '<div class="home-right">' +
+      '<div class="page-head"><h2>最新资料更新</h2><p class="page-sub">点击任意一条进入所在文件夹</p></div>' +
+      '<div class="update-list">' + updateHtml + '</div>' +
+      '</div></div>';
+
+    var cardBtns = content.querySelectorAll(".subject-card[data-open]");
+    Array.prototype.forEach.call(cardBtns, function (b) {
+      b.addEventListener("click", function () { selectFolder(b.getAttribute("data-open")); });
+    });
+    var updateBtns = content.querySelectorAll(".update-card[data-open]");
+    Array.prototype.forEach.call(updateBtns, function (b) {
+      b.addEventListener("click", function () { selectFolder(b.getAttribute("data-open")); });
+    });
   }
 
   function renderFolderFiles(files) {
@@ -870,7 +911,7 @@
     if (state.selectedPath === targetPath) {
       await selectFolder(targetPath);
     } else if (targetPath === ROOT && state.selectedPath === null) {
-      loadRecent();
+      loadHome();
     }
   }
 
