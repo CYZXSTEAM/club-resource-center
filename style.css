@@ -31,7 +31,7 @@ body {
   background: linear-gradient(160deg, var(--bg1) 0%, var(--bg2) 45%, var(--bg3) 100%);
   background-attachment: fixed;
   color: var(--ink);
-  font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", system-ui, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "Hiragino Sans GB", sans-serif;
   line-height: 1.5;
 }
 
@@ -155,18 +155,22 @@ button { font-family: inherit; }
 
 /* ---------- 按钮 ---------- */
 .btn {
-  display: inline-block;
-  border: 1px solid var(--border);
-  background: rgba(255, 255, 255, .6);
-  color: var(--ink);
-  border-radius: 9px;
-  padding: 7px 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(47, 127, 224, .28);
+  background: #fff;
+  color: #2c6cb0;
+  border-radius: 10px;
+  padding: 8px 14px;
   font-size: 14px;
   cursor: pointer;
-  transition: border-color .15s, color .15s, transform .12s, background .15s;
+  transition: all .15s;
+  white-space: nowrap;
 }
 
 .btn:hover { border-color: var(--primary); color: var(--primary); transform: translateY(-1px); }
+.btn:disabled { opacity: .55; cursor: not-allowed; transform: none; }
 
 .btn.primary {
   background: linear-gradient(135deg, #3b8aec, #2f6fd0);
@@ -174,34 +178,37 @@ button { font-family: inherit; }
   border-color: transparent;
 }
 
-.btn.primary:hover { color: #fff; }
+.btn.primary:hover { filter: brightness(1.07); color: #fff; }
 
-.btn.ghost { background: rgba(255, 255, 255, .45); border-color: rgba(255, 255, 255, .7); }
-.btn.small { padding: 4px 10px; font-size: 13px; border-radius: 7px; }
-.btn.block { display: block; width: 100%; padding: 11px 16px; font-size: 15px; }
+.btn.mini { padding: 5px 10px; font-size: 13px; border-radius: 8px; }
+.btn.small { padding: 5px 10px; font-size: 13px; border-radius: 8px; }
+.btn.ghost { background: rgba(255, 255, 255, .55); border-color: rgba(255, 255, 255, .7); }
+.btn.block { display: flex; width: 100%; justify-content: center; padding: 11px 16px; font-size: 15px; }
 .btn:disabled { opacity: .6; cursor: not-allowed; transform: none; }
 
 /* ---------- 容器与双栏 ---------- */
-.container { max-width: 1180px; margin: 0 auto; padding: 16px 16px 48px; }
+.container { max-width: 1320px; margin: 0 auto; padding: 18px 18px 48px; }
 
 .layout {
   display: flex;
-  gap: 16px;
+  gap: 18px;
   align-items: flex-start;
 }
 
 .sidebar {
-  width: 264px;
+  width: 260px;
   flex-shrink: 0;
-  background: var(--glass);
-  border: 1px solid rgba(255, 255, 255, .7);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  padding: 14px 10px;
+  background: rgba(255, 255, 255, .62);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, .75);
+  border-radius: 18px;
+  padding: 14px;
   position: sticky;
-  top: 70px;
-  max-height: calc(100vh - 90px);
+  top: 74px;
+  max-height: calc(100vh - 96px);
   overflow: auto;
+  box-shadow: var(--shadow);
 }
 
 .sidebar-head {
@@ -408,7 +415,7 @@ button { font-family: inherit; }
 /* ---------- 内容区 ---------- */
 .content { min-height: 200px; }
 
-.loading, .empty, .error-box {
+.loading, .error-box {
   text-align: center;
   color: var(--muted);
   padding: 46px 16px;
@@ -417,6 +424,17 @@ button { font-family: inherit; }
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   font-size: 14px;
+}
+
+.empty {
+  text-align: center;
+  color: #6b85a0;
+  padding: 48px 20px;
+  background: rgba(255, 255, 255, .5);
+  border: 1px dashed rgba(122, 178, 235, .5);
+  border-radius: 16px;
+  font-size: 15px;
+  line-height: 1.8;
 }
 
 .error-box { color: var(--danger); }
@@ -496,6 +514,7 @@ button { font-family: inherit; }
 .page-head { margin-bottom: 14px; }
 .page-head h2 { margin: 4px 0 6px; font-size: 24px; color: #1f3d5c; }
 .page-sub { margin: 0 0 12px; color: #5d7c9e; font-size: 13.5px; }
+.sub-actions { margin-bottom: 16px; }
 
 .folder-bar {
   display: flex;
@@ -547,6 +566,8 @@ button { font-family: inherit; }
   border: 1px solid var(--blue-border);
   box-shadow: 0 4px 14px rgba(99, 156, 220, .16);
   margin-bottom: 12px;
+  cursor: pointer;
+  touch-action: manipulation;
   transition: all .15s;
 }
 
@@ -565,10 +586,7 @@ button { font-family: inherit; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  cursor: pointer;
 }
-
-.res-title:hover { color: var(--primary); }
 
 .res-meta {
   font-size: 12.5px;
@@ -609,7 +627,6 @@ button { font-family: inherit; }
 .empty.small {
   background: transparent;
   border: none;
-  box-shadow: none;
   padding: 18px 8px;
   font-size: 13px;
 }
@@ -617,12 +634,13 @@ button { font-family: inherit; }
 /* ---------- 主页（文件夹卡片 + 最近更新） ---------- */
 .home-layout {
   display: flex;
-  gap: 32px;
+  gap: 42px;
   align-items: flex-start;
 }
 
 .home-left { flex: 1.25; min-width: 0; }
 .home-right { flex: 1; min-width: 0; }
+.home-right .page-head { margin-bottom: 0; }
 
 .page-head h2 { margin: 0; font-size: 18px; color: var(--primary-dark); }
 .page-sub { margin: 4px 0 0; font-size: 12.5px; color: var(--muted); }
@@ -630,8 +648,7 @@ button { font-family: inherit; }
 .subject-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-  gap: 16px;
-  margin-top: 12px;
+  gap: 18px;
 }
 
 .subject-card {
@@ -641,7 +658,7 @@ button { font-family: inherit; }
   align-items: flex-start;
   gap: 8px;
   padding: 22px 20px;
-  border-radius: 22px;
+  border-radius: 24px;
   border: 1px solid rgba(255, 255, 255, .9);
   background: linear-gradient(150deg, #ffffff 0%, #e9f3fd 100%);
   cursor: pointer;
@@ -660,6 +677,23 @@ button { font-family: inherit; }
 .sc-icon { font-size: 30px; line-height: 1; }
 .sc-name { font-size: 19px; font-weight: 700; color: #1f3d5c; }
 .sc-meta { font-size: 12.5px; color: #3f6f9f; }
+
+.subject-card .subject-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.subject-card .subject-right .count {
+  background: rgba(47, 127, 224, .10);
+  color: #2c6cb0;
+  border-radius: 99px;
+  padding: 1px 9px;
+  font-size: 12px;
+  font-weight: 700;
+}
 
 .update-list {
   display: flex;

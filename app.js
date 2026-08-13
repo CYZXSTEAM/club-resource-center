@@ -394,7 +394,7 @@
   }
 
   function updateTreeToggle() {
-    treeToggle.hidden = state.mode !== "upload" || !window.matchMedia("(max-width: 768px)").matches;
+    treeToggle.hidden = !window.matchMedia("(max-width: 768px)").matches;
   }
 
   function setLoginError(msg) {
@@ -472,9 +472,8 @@
     var up = mode === "upload";
     $("modeUpload").classList.toggle("active", up);
     $("modeDownload").classList.toggle("active", !up);
-    sidebar.hidden = !up;
     uploadArea.hidden = !up;
-    breadcrumb.hidden = up;
+    breadcrumb.hidden = true;
     content.hidden = up;
     if (up) closeSearchPanel();
     updateTreeToggle();
@@ -598,7 +597,6 @@
     closeDrawer();
     fillFolderSelect(ROOT);
     if (state.mode === "download") {
-      renderBreadcrumb();
       loadHome();
     }
   }
@@ -610,7 +608,6 @@
     closeDrawer();
     fillFolderSelect(path);
     if (state.mode === "upload") return;
-    renderBreadcrumb();
     content.innerHTML = '<div class="loading">加载中…</div>';
     try {
       state.currentFiles = await listFolder(path);
@@ -704,13 +701,14 @@
     var updates = items.slice().sort(function (a, b) { return b.modified - a.modified; }).slice(0, RECENT_LIMIT);
     var cardHtml = cards.length
       ? cards.map(function (c) {
-          return '<button class="subject-card" data-open="' + esc(c.path) + '">' +
+          return '<div class="subject-card" data-open="' + esc(c.path) + '" title="进入「' + esc(c.name) + '」">' +
             '<div class="sc-icon">' + c.icon + '</div>' +
             '<div class="sc-name">' + esc(c.name) + '</div>' +
-            '<div class="sc-meta">' + (c.count === null ? "文件数未知" : c.count + " 个文件") + '</div>' +
-            '</button>';
+            '<div class="sc-meta">' + (c.count === null ? "份数未知" : c.count + " 份资料") + '</div>' +
+            '<div class="subject-right"><span class="count">' + (c.count === null ? "?" : c.count) + '</span></div>' +
+            '</div>';
         }).join("")
-      : '<div class="empty">根目录下还没有文件夹，先在上方上传面板新建一个。</div>';
+      : '<div class="empty">根目录下还没有文件夹，先切到「上传」模式新建一个。</div>';
     var updateHtml = updates.length
       ? updates.map(function (u) {
           var absPath = ROOT + u.relPath;
@@ -727,12 +725,9 @@
       : '<div class="empty">暂无资料更新</div>';
     content.innerHTML =
       '<div class="home-layout">' +
-      '<div class="home-left">' +
-      '<div class="section-head"><h2>文件夹</h2><span>点击进入</span></div>' +
-      '<div class="subject-grid">' + cardHtml + '</div>' +
-      '</div>' +
+      '<div class="home-left"><div class="subject-grid">' + cardHtml + '</div></div>' +
       '<div class="home-right">' +
-      '<div class="page-head"><h2>最新资料更新</h2><p class="page-sub">点击任意一条进入所在文件夹</p></div>' +
+      '<div class="page-head"><h2>最新资料更新</h2><p class="page-sub">点击任意一条可直接进入对应文件夹并定位到该资料</p></div>' +
       '<div class="update-list">' + updateHtml + '</div>' +
       '</div></div>';
 
@@ -754,51 +749,62 @@
     var dirs = sorted.filter(function (f) { return f.type === "dir"; });
     var fileItems = sorted.filter(function (f) { return f.type === "file"; });
 
-    var head = '<div class="page-head">' +
+    var chips = await Promise.all(dirs.map(function (d) {
+      return listFolder(d.path).then(function (fs) {
+        return fs.filter(function (f) { return f.type === "file"; }).length;
+      }).catch(function () { return null; });
+    }));
+
+    var folderChips = dirs.map(function (d, i) {
+      return '<div class="folder-chip" data-open="' + esc(d.path) + '" title="进入「' + esc(d.name) + '」">' +
+        '<span>📁</span>' +
+        '<span class="folder-name">' + esc(d.name) + '</span>' +
+        '<span class="count">' + (chips[i] === null ? "?" : chips[i]) + '</span></div>';
+    }).join("");
+
+    var cards = fileItems.map(function (f) {
+      var full = joinPath(state.selectedPath, f.name);
+      var previewable = isPreviewable(f.name);
+      var ext = (extOf(f.name) || "文件").toUpperCase();
+      return '<div class="res-card" data-card-preview="' + esc(full) + '" data-card-download="' + esc(full) +
+        '" data-card-previewable="' + (previewable ? 1 : 0) + '" title="' + (previewable ? "点击预览，或使用下方按钮" : "点击下载") + '">' +
+        '<div class="res-info">' +
+        '<div class="res-title">' + esc(f.name) + '</div>' +
+        '<div class="res-meta">📄 ' + esc(ext) + ' · 文件 · ' + fmtSize(f.size) + ' · ' + fmtTime(f.modified) + '</div>' +
+        '</div>' +
+        '<div class="res-actions">' +
+        (previewable ? '<button class="btn edit" data-preview="' + esc(full) + '">预览</button>' : "") +
+        '<button class="btn download" data-download="' + esc(full) + '">⭳ 下载</button>' +
+        '</div></div>';
+    }).join("");
+
+    content.innerHTML =
+      '<div class="page-head">' +
+      '<button class="btn ghost" data-home="1">← 返回主页</button>' +
       '<h2>' + esc(fileName(state.selectedPath)) + '</h2>' +
-      '<p class="page-sub">' + esc(relPath(state.selectedPath) || "根目录") + ' · ' + fileItems.length + ' 个文件</p></div>';
+      '<p class="page-sub">共 ' + fileItems.length + ' 份资料 · ' + dirs.length + ' 个文件夹 · 点击资料卡片即可下载或打开</p>' +
+      '</div>' +
+      '<div class="folder-bar">' +
+      '<div class="folder-chip active">全部 <span class="count">' + fileItems.length + '</span></div>' +
+      folderChips +
+      '</div>' +
+      '<div class="res-list">' + (cards || '<div class="empty">暂无资料<br>切到「上传」模式添加文件</div>') + '</div>';
 
-    var chipsHtml = "";
-    if (dirs.length) {
-      var counts = await Promise.all(dirs.map(function (d) {
-        return listFolder(d.path).then(function (fs) {
-          return fs.filter(function (f) { return f.type === "file"; }).length;
-        }).catch(function () { return null; });
-      }));
-      chipsHtml = '<div class="folder-bar">' + dirs.map(function (d, i) {
-        return '<button class="folder-chip" data-open="' + esc(d.path) + '">' +
-          '<span class="folder-name">📁 ' + esc(d.name) + '</span>' +
-          '<span class="count">' + (counts[i] === null ? "?" : counts[i]) + '</span></button>';
-      }).join("") + '</div>';
-    }
-
-    var listHtml;
-    if (!fileItems.length) {
-      listHtml = '<div class="empty' + (dirs.length ? " small" : "") + '">' +
-        (dirs.length ? "此文件夹只有子文件夹，没有直接文件" : "📂 此文件夹还没有文件，切到上传模式添加。") + '</div>';
-    } else {
-      listHtml = '<div class="res-list">' + fileItems.map(function (f) {
-        var full = joinPath(state.selectedPath, f.name);
-        var previewable = isPreviewable(f.name);
-        var titleAttr = previewable
-          ? 'data-preview="' + esc(full) + '"'
-          : 'data-download="' + esc(full) + '"';
-        return '<div class="res-card">' +
-          '<div class="res-info">' +
-          '<div class="res-title" ' + titleAttr + '>' + esc(f.name) + '</div>' +
-          '<div class="res-meta">' +
-          '<span class="res-badge">' + esc((extOf(f.name) || "文件").toUpperCase()) + '</span>' +
-          '<span>' + fmtSize(f.size) + '</span>' +
-          '<span>' + fmtTime(f.modified) + '</span>' +
-          '</div></div>' +
-          '<div class="res-actions">' +
-          (previewable ? '<button class="btn edit small" data-preview="' + esc(full) + '">预览</button>' : "") +
-          '<button class="btn download small" data-download="' + esc(full) + '">下载</button>' +
-          '</div></div>';
-      }).join("") + '</div>';
-    }
-
-    content.innerHTML = head + chipsHtml + listHtml;
+    var homeBtn = content.querySelector("[data-home]");
+    if (homeBtn) homeBtn.addEventListener("click", selectRoot);
+    var cardEls = content.querySelectorAll(".res-card[data-card-previewable]");
+    Array.prototype.forEach.call(cardEls, function (card) {
+      card.addEventListener("click", function (e) {
+        if (e.target.closest && e.target.closest(".res-actions")) return;
+        var p = card.getAttribute("data-card-preview");
+        var dl = card.getAttribute("data-card-download");
+        if (card.getAttribute("data-card-previewable") === "1") {
+          previewFile(p).catch(function (err) { if (!err.auth) showBanner(friendlyError(err), true); });
+        } else {
+          downloadFile(dl).catch(function (err) { if (!err.auth) showBanner(friendlyError(err), true); });
+        }
+      });
+    });
     wireFileActions();
   }
 
