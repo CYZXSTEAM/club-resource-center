@@ -14,6 +14,10 @@
       <input type="search" id="globalSearch" placeholder="搜索文件名…" autocomplete="off">
       <div class="search-panel hidden" id="searchPanel"></div>
     </div>
+    <div class="mode-toggle" id="modeToggle">
+      <button class="mode-seg" id="modeUpload" data-mode="upload" type="button">上传</button>
+      <button class="mode-seg active" id="modeDownload" data-mode="download" type="button">下载</button>
+    </div>
     <div class="topbar-actions">
       <button class="btn ghost" id="treeToggle" hidden>☰ 目录</button>
       <button class="btn ghost" id="logoutBtn" hidden>退出登录</button>
@@ -75,7 +79,7 @@
 
   <div id="modalRoot"></div>
 
-  <script src="config.js?v=4"></script>
-  <script src="app.js?v=4"></script>
+  <script src="config.js?v=5"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>

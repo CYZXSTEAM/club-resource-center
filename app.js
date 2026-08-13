@@ -15,7 +15,8 @@
     selectedPath: null,   /* null 表示根节点（右侧显示主页） */
     currentFiles: [],
     treeCache: {},        /* path -> 子文件夹数组；undefined 表示未加载 */
-    expanded: {}          /* path -> false | "open" | "loading" */
+    expanded: {},         /* path -> false | "open" | "loading" */
+    mode: "download"      /* "upload" 或 "download" */
   };
 
   var memoryAuth = null;        /* 内存中的登录凭据，刷新即清 */
@@ -347,7 +348,8 @@
       selectedPath: null,
       currentFiles: [],
       treeCache: {},
-      expanded: {}
+      expanded: {},
+      mode: "download"
     };
   }
 
@@ -388,7 +390,7 @@
   }
 
   function updateTreeToggle() {
-    treeToggle.hidden = !window.matchMedia("(max-width: 768px)").matches;
+    treeToggle.hidden = state.mode !== "upload" || !window.matchMedia("(max-width: 768px)").matches;
   }
 
   function setLoginError(msg) {
@@ -456,9 +458,34 @@
   function enterMain() {
     resetState();
     showMain();
-    uploadArea.hidden = false;
+    state.mode = "download";
+    applyModeLayout("download");
     renderTree();
     selectRoot();
+  }
+
+  function applyModeLayout(mode) {
+    var up = mode === "upload";
+    $("modeUpload").classList.toggle("active", up);
+    $("modeDownload").classList.toggle("active", !up);
+    sidebar.hidden = !up;
+    uploadArea.hidden = !up;
+    breadcrumb.hidden = up;
+    content.hidden = up;
+    if (up) closeSearchPanel();
+    updateTreeToggle();
+  }
+
+  function switchMode(mode) {
+    if (state.mode === mode) return;
+    state.mode = mode;
+    applyModeLayout(mode);
+    if (mode === "upload") {
+      fillFolderSelect(state.selectedPath || ROOT);
+      renderTree();
+    } else {
+      selectRoot();
+    }
   }
 
   /* ================= 目录树 ================= */
@@ -554,9 +581,11 @@
     renderTree();
     closeSearchPanel();
     closeDrawer();
-    renderBreadcrumb();
     fillFolderSelect(ROOT);
-    loadHome();
+    if (state.mode === "download") {
+      renderBreadcrumb();
+      loadHome();
+    }
   }
 
   async function selectFolder(path) {
@@ -564,8 +593,9 @@
     renderTree();
     closeSearchPanel();
     closeDrawer();
-    renderBreadcrumb();
     fillFolderSelect(path);
+    if (state.mode === "upload") return;
+    renderBreadcrumb();
     content.innerHTML = '<div class="loading">加载中…</div>';
     try {
       state.currentFiles = await listFolder(path);
@@ -908,10 +938,12 @@
 
     var okCount = files.length - failed;
     showBanner("上传完成：成功 " + okCount + " 个" + (failed ? "，失败 " + failed + " 个" : ""), failed > 0);
-    if (state.selectedPath === targetPath) {
-      await selectFolder(targetPath);
-    } else if (targetPath === ROOT && state.selectedPath === null) {
-      loadHome();
+    if (state.mode === "download") {
+      if (state.selectedPath === targetPath) {
+        await selectFolder(targetPath);
+      } else if (targetPath === ROOT && state.selectedPath === null) {
+        loadHome();
+      }
     }
   }
 
@@ -1118,7 +1150,9 @@
       showLogin("已退出登录");
     });
     $("brandTitle").addEventListener("click", function () {
-      if (getAuth()) selectRoot();
+      if (!getAuth()) return;
+      if (state.mode === "upload") switchMode("download");
+      else selectRoot();
     });
     treeToggle.addEventListener("click", function () {
       sidebar.classList.add("open");
@@ -1126,6 +1160,8 @@
     });
     sidebarMask.addEventListener("click", closeDrawer);
     window.addEventListener("resize", updateTreeToggle);
+    $("modeUpload").addEventListener("click", function () { switchMode("upload"); });
+    $("modeDownload").addEventListener("click", function () { switchMode("download"); });
     initUpload();
     initSearch();
     showLogin();
