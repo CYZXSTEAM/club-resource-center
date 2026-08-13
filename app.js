@@ -16,7 +16,9 @@
     currentFiles: [],
     treeCache: {},        /* path -> 子文件夹数组；undefined 表示未加载 */
     expanded: {},         /* path -> false | "open" | "loading" */
-    mode: "download"      /* "upload" 或 "download" */
+    mode: "download",     /* "upload" 或 "download" */
+    selected: {},         /* 下载模式勾选的文件路径集合 */
+    batchArmed: false     /* 批量下载二次确认状态 */
   };
 
   var memoryAuth = null;        /* 内存中的登录凭据，刷新即清 */
@@ -25,6 +27,9 @@
   var bannerTimer = null;
   var searchTimer = null;
   var previewObjectUrl = null;
+  var confirmPath = null;   /* 二次确认下载的卡片路径 */
+  var confirmTimer = null;
+  var batchTimer = null;
 
   var $ = function (id) { return document.getElementById(id); };
   var loginView = $("loginView");
@@ -48,6 +53,11 @@
   var searchInput = $("globalSearch");
   var searchPanel = $("searchPanel");
   var modalRoot = $("modalRoot");
+  var batchBar = $("batchBar");
+  var batchCount = $("batchCount");
+  var batchDownloadBtn = $("batchDownloadBtn");
+  var batchClearBtn = $("batchClearBtn");
+  var guideBtn = $("guideBtn");
 
   /* ================= 登录凭据（仅存内存，刷新即清） ================= */
 
@@ -349,7 +359,9 @@
       currentFiles: [],
       treeCache: {},
       expanded: {},
-      mode: "download"
+      mode: "download",
+      selected: {},
+      batchArmed: false
     };
   }
 
@@ -371,6 +383,7 @@
     treeToggle.hidden = true;
     searchWrap.hidden = true;
     $("modeToggle").hidden = true;
+    guideBtn.hidden = true;
     breadcrumb.innerHTML = "";
     content.innerHTML = "";
     tree.innerHTML = "";
@@ -379,6 +392,7 @@
     uploadQueue.innerHTML = "";
     closeDrawer();
     closeSearchPanel();
+    batchBar.hidden = true;
     hideBanner();
     setLoginError(message || "");
   }
@@ -389,6 +403,7 @@
     logoutBtn.hidden = false;
     searchWrap.hidden = false;
     $("modeToggle").hidden = false;
+    guideBtn.hidden = false;
     updateTreeToggle();
     hideBanner();
   }
@@ -466,6 +481,7 @@
     applyModeLayout("download");
     renderTree();
     selectRoot();
+    maybeAutoGuide();
   }
 
   function applyModeLayout(mode) {
@@ -477,6 +493,7 @@
     content.hidden = up;
     if (up) closeSearchPanel();
     updateTreeToggle();
+    updateBatchBar();
   }
 
   function switchMode(mode) {
@@ -591,6 +608,7 @@
   }
 
   function selectRoot() {
+    clearSelection();
     state.selectedPath = null;
     renderTree();
     closeSearchPanel();
@@ -602,6 +620,7 @@
   }
 
   async function selectFolder(path) {
+    clearSelection();
     state.selectedPath = path;
     renderTree();
     closeSearchPanel();
@@ -665,7 +684,7 @@
 
   function loadHome() {
     content.innerHTML = '<div class="loading">正在加载主页…</div>';
-    Promise.all([
+    return Promise.all([
       ensureTreeChildren(ROOT),
       listRecursiveFiles(ROOT)
     ]).then(function (results) {
@@ -766,15 +785,20 @@
       var full = joinPath(state.selectedPath, f.name);
       var previewable = isPreviewable(f.name);
       var ext = (extOf(f.name) || "文件").toUpperCase();
-      return '<div class="res-card" data-card-preview="' + esc(full) + '" data-card-download="' + esc(full) +
-        '" data-card-previewable="' + (previewable ? 1 : 0) + '" title="' + (previewable ? "点击预览，或使用下方按钮" : "点击下载") + '">' +
+      var isSel = !!state.selected[full];
+      return '<div class="res-card' + (isSel ? " selected" : "") + '" data-path="' + esc(full) +
+        '" data-card-preview="' + esc(full) + '" data-card-download="' + esc(full) +
+        '" data-card-previewable="' + (previewable ? 1 : 0) + '" title="点击两次下载（先确认后下载）">' +
+        '<label class="res-check" title="选择以批量下载">' +
+        '<input type="checkbox" class="res-select" data-select-path="' + esc(full) + '"' + (isSel ? " checked" : "") + '>' +
+        '</label>' +
         '<div class="res-info">' +
         '<div class="res-title">' + esc(f.name) + '</div>' +
         '<div class="res-meta">📄 ' + esc(ext) + ' · 文件 · ' + fmtSize(f.size) + ' · ' + fmtTime(f.modified) + '</div>' +
         '</div>' +
         '<div class="res-actions">' +
         (previewable ? '<button class="btn edit" data-preview="' + esc(full) + '">预览</button>' : "") +
-        '<button class="btn download" data-download="' + esc(full) + '">⭳ 下载</button>' +
+        '<button class="btn download" data-confirm-download="' + esc(full) + '">⭳ 下载</button>' +
         '</div></div>';
     }).join("");
 
@@ -795,17 +819,24 @@
     var cardEls = content.querySelectorAll(".res-card[data-card-previewable]");
     Array.prototype.forEach.call(cardEls, function (card) {
       card.addEventListener("click", function (e) {
-        if (e.target.closest && e.target.closest(".res-actions")) return;
-        var p = card.getAttribute("data-card-preview");
-        var dl = card.getAttribute("data-card-download");
-        if (card.getAttribute("data-card-previewable") === "1") {
-          previewFile(p).catch(function (err) { if (!err.auth) showBanner(friendlyError(err), true); });
-        } else {
-          downloadFile(dl).catch(function (err) { if (!err.auth) showBanner(friendlyError(err), true); });
-        }
+        if (e.target.closest && (e.target.closest(".res-check") || e.target.closest(".res-actions"))) return;
+        armConfirm(card.getAttribute("data-path"));
+      });
+    });
+    var checkEls = content.querySelectorAll(".res-select");
+    Array.prototype.forEach.call(checkEls, function (cb) {
+      cb.addEventListener("change", function () {
+        toggleSelect(cb.getAttribute("data-select-path"), cb.checked);
+      });
+    });
+    var confirmEls = content.querySelectorAll("[data-confirm-download]");
+    Array.prototype.forEach.call(confirmEls, function (b) {
+      b.addEventListener("click", function () {
+        armConfirm(b.getAttribute("data-confirm-download"));
       });
     });
     wireFileActions();
+    updateBatchBar();
   }
 
   function wireFileActions() {
@@ -831,6 +862,134 @@
         });
       });
     });
+  }
+
+  /* ================= 二次确认下载与批量选择 ================= */
+
+  function clearSelection() {
+    state.selected = {};
+    state.batchArmed = false;
+    if (confirmPath) {
+      clearTimeout(confirmTimer);
+      confirmTimer = null;
+      confirmPath = null;
+    }
+    updateBatchBar();
+  }
+
+  function updateBatchBar() {
+    var n = Object.keys(state.selected).length;
+    var show = state.mode === "download" && state.selectedPath !== null && n > 0;
+    batchBar.hidden = !show;
+    batchCount.textContent = String(n);
+    batchDownloadBtn.textContent = state.batchArmed ? "再次点击确认下载" : "批量下载";
+  }
+
+  function updateCardSelection() {
+    Array.prototype.forEach.call(content.querySelectorAll(".res-card[data-path]"), function (card) {
+      card.classList.toggle("selected", !!state.selected[card.getAttribute("data-path")]);
+    });
+  }
+
+  function toggleSelect(path, on) {
+    if (on) state.selected[path] = true;
+    else delete state.selected[path];
+    state.batchArmed = false;
+    clearTimeout(batchTimer);
+    updateCardSelection();
+    updateBatchBar();
+  }
+
+  function armConfirm(path) {
+    if (confirmPath === path) {
+      clearTimeout(confirmTimer);
+      confirmTimer = null;
+      confirmPath = null;
+      refreshConfirmUI();
+      downloadFile(path).catch(function (err) {
+        if (!err.auth) showBanner(friendlyError(err), true);
+      });
+      return;
+    }
+    if (confirmPath) clearTimeout(confirmTimer);
+    confirmPath = path;
+    confirmTimer = setTimeout(function () {
+      confirmPath = null;
+      refreshConfirmUI();
+    }, 3000);
+    refreshConfirmUI();
+  }
+
+  function refreshConfirmUI() {
+    Array.prototype.forEach.call(content.querySelectorAll(".res-card[data-path]"), function (card) {
+      var path = card.getAttribute("data-path");
+      var armed = confirmPath === path;
+      card.classList.toggle("armed", armed);
+      var btn = card.querySelector(".btn.download");
+      if (btn) btn.textContent = armed ? "✔ 再次点击下载" : "⭳ 下载";
+    });
+  }
+
+  /* Koofr 支持把文件夹内选中的文件打包下载 */
+  async function batchDownloadZip(folderPath, names) {
+    var url = BASE + "/content/api/v2.1/mounts/" + encodeURIComponent(MOUNT) + "/files/get?path=" +
+      encodePath(folderPath) + "&force=true";
+    var res = await koofrFetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: names.map(function (n) { return "files=" + encodeURIComponent(n); }).join("&")
+    });
+    if (!res.ok) throw new Error(await apiErrorText(res));
+    var blob = await res.blob();
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = fileName(folderPath) + ".zip";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 60000);
+  }
+
+  async function onBatchDownload() {
+    var paths = Object.keys(state.selected);
+    if (!paths.length) { showBanner("请先选择资料", true); return; }
+    if (!state.batchArmed) {
+      state.batchArmed = true;
+      clearTimeout(batchTimer);
+      updateBatchBar();
+      batchTimer = setTimeout(function () { state.batchArmed = false; updateBatchBar(); }, 3000);
+      return;
+    }
+    state.batchArmed = false;
+    updateBatchBar();
+    var folderPath = state.selectedPath;
+    showBanner("正在打包下载…", false);
+    try {
+      if (paths.length === 1) {
+        await downloadFile(paths[0]);
+        showBanner("已开始下载「" + fileName(paths[0]) + "」", false);
+      } else {
+        await batchDownloadZip(folderPath, paths.map(fileName));
+        showBanner("已打包下载 " + paths.length + " 个文件", false);
+      }
+    } catch (err) {
+      if (err.auth) return;
+      showBanner("打包失败，改为逐个下载", true);
+      var ok = 0;
+      for (var i = 0; i < paths.length; i++) {
+        try { await downloadFile(paths[i]); ok++; } catch (e2) { if (e2.auth) return; }
+        await new Promise(function (r) { setTimeout(r, 250); });
+      }
+      showBanner("已下载 " + ok + " 个文件", ok < paths.length);
+    }
+  }
+
+  function onBatchClear() {
+    state.selected = {};
+    state.batchArmed = false;
+    clearTimeout(batchTimer);
+    updateCardSelection();
+    updateBatchBar();
   }
 
   /* ================= 预览 ================= */
@@ -1120,6 +1279,202 @@
     }
   }
 
+  /* ================= 教学引导 ================= */
+
+  var GUIDE_SEEN_KEY = "club_tour_seen";
+  var GUIDE_PROGRESS_KEY = "club_tour_progress";
+  var tourFolder = null;    /* 第 3 步进入的文件夹，供第 4-8 步返回使用 */
+  var tourRestore = null;   /* 进入教学前的状态快照 */
+
+  var tourSteps = [
+    {
+      id: 1, title: "目录",
+      text: "左侧是目录，可点击文件夹前的箭头展开子目录。",
+      targets: [".sidebar"], view: "home"
+    },
+    {
+      id: 2, title: "资料板块",
+      text: "中间是文件夹卡片，单击即可进入资料页。",
+      targets: [".subject-grid"], view: "home"
+    },
+    {
+      id: 3, title: "最新资料更新",
+      text: "右侧是最新资料更新，点击任意一条即可进入资料页并定位该资料。请点击！",
+      targets: [".update-list"], view: "home", waitClick: true,
+      done: function () {
+        return state.mode === "download" && state.selectedPath !== null &&
+          content.querySelector(".res-card") !== null;
+      },
+      onComplete: function () { tourFolder = state.selectedPath; }
+    },
+    {
+      id: 4, title: "下载",
+      text: "资料页中点击「下载」需要两次：第一次确认，第二次才下载，防止误触。",
+      targets: ["[data-confirm-download]"], view: "folder"
+    },
+    {
+      id: 5, title: "批量勾选",
+      text: "勾选卡片左侧的方框，可批量选择后点击底部「批量下载」。",
+      targets: [".res-select"], view: "folder"
+    },
+    {
+      id: 6, title: "返回主页",
+      text: "「返回主页」按钮或左上角「社团资源库」都可回到主页。",
+      targets: ["[data-home]", "#brandTitle"], view: "folder"
+    },
+    {
+      id: 7, title: "切换目录",
+      text: "点击左侧目录可切换查看其他文件夹。",
+      targets: [".sidebar"], view: "folder"
+    },
+    {
+      id: 8, title: "上传 / 下载切换",
+      text: "顶栏可切换「上传 / 下载」模式，请点击「上传」进入上传页面。",
+      targets: ["#modeToggle"], view: "folder", waitClick: true,
+      done: function () {
+        return state.mode === "upload" && !uploadArea.hidden;
+      }
+    },
+    {
+      id: 9, title: "选择目录",
+      text: "上传前先选择目标文件夹：左侧目录或右侧「上传到」下拉框均可。",
+      targets: [".sidebar", "#folderSelect"], view: "upload"
+    },
+    {
+      id: 10, title: "上传文件",
+      text: "把文件拖入上传窗口，或点击选择文件，即可上传。",
+      targets: ["#uploadZone"], view: "upload"
+    }
+  ];
+
+  function isHomeShown() {
+    return state.mode === "download" && state.selectedPath === null &&
+      content.querySelector(".subject-grid") !== null;
+  }
+
+  function isFolderShown(p) {
+    return state.mode === "download" && state.selectedPath === p &&
+      content.querySelector(".page-head") !== null;
+  }
+
+  /* 递归加载并展开整棵目录树 */
+  async function expandAllTree() {
+    async function walk(path) {
+      try {
+        var dirs = await ensureTreeChildren(path);
+        state.expanded[path] = "open";
+        for (var i = 0; i < dirs.length; i++) {
+          await walk(dirs[i].path);
+        }
+      } catch (e) {
+        state.expanded[path] = "open";
+      }
+    }
+    await walk(ROOT);
+    renderTree();
+  }
+
+  /* 进入任一步骤前，恢复该步骤所需视图；第 1/7/9 步自动展开全部目录 */
+  function ensureTourView(step) {
+    var needExpand = step.id === 1 || step.id === 7 || step.id === 9;
+    var done = Promise.resolve();
+    if (step.view === "upload") {
+      if (state.mode !== "upload") switchMode("upload");
+    } else if (step.view === "folder") {
+      if (state.mode !== "download") switchMode("download");
+      var p = tourFolder || state.selectedPath || ROOT;
+      if (!isFolderShown(p)) {
+        done = selectFolder(p).then(function () {}, function () {});
+      }
+    } else {
+      if (state.mode !== "download") switchMode("download");
+      if (!isHomeShown()) {
+        state.selectedPath = null;
+        renderTree();
+        fillFolderSelect(ROOT);
+        done = loadHome().then(function () {}, function () {});
+      }
+    }
+    return done.then(function () {
+      if (needExpand) return expandAllTree();
+    });
+  }
+
+  function saveTourProgress(i) {
+    try { localStorage.setItem(GUIDE_PROGRESS_KEY, String(i)); } catch (e) { /* 忽略 */ }
+  }
+
+  function clearTourProgress() {
+    try { localStorage.removeItem(GUIDE_PROGRESS_KEY); } catch (e) { /* 忽略 */ }
+  }
+
+  function onTourExit(completed) {
+    restoreTourState();
+    /* 完整走完最后一步才清零，下次从头开始；中途退出保留进度，下次续上 */
+    if (completed) clearTourProgress();
+  }
+
+  function startGuideTour() {
+    if (!window.GuideTour || window.GuideTour.isActive()) return;
+    tourFolder = null;
+    tourRestore = {
+      mode: state.mode,
+      selectedPath: state.selectedPath,
+      selected: Object.assign({}, state.selected),
+      expanded: Object.assign({}, state.expanded)
+    };
+    var saved = null;
+    try { saved = parseInt(localStorage.getItem(GUIDE_PROGRESS_KEY), 10); } catch (e) { /* 忽略 */ }
+    if (isNaN(saved) || saved < 0 || saved >= tourSteps.length) saved = 0;
+    window.GuideTour.start(tourSteps, {
+      startIndex: saved,
+      ensure: ensureTourView,
+      onStep: saveTourProgress,
+      onExit: onTourExit
+    });
+  }
+
+  function restoreTourState() {
+    if (confirmPath) {
+      clearTimeout(confirmTimer);
+      confirmTimer = null;
+      confirmPath = null;
+    }
+    if (!tourRestore) return;
+    var r = tourRestore;
+    tourRestore = null;
+    state.selected = r.selected || {};
+    state.batchArmed = false;
+    state.expanded = r.expanded || {};
+    if (r.mode === "upload") {
+      switchMode("upload");
+    } else {
+      switchMode("download");
+      if (r.selectedPath) selectFolder(r.selectedPath);
+      else selectRoot();
+    }
+    updateBatchBar();
+  }
+
+  function maybeAutoGuide() {
+    if (CONFIG.autoGuide === false) return;
+    if (!window.GuideTour) return;
+    var seen = null;
+    try { seen = localStorage.getItem(GUIDE_SEEN_KEY); } catch (e) { return; }
+    if (seen) return;
+    try { localStorage.setItem(GUIDE_SEEN_KEY, "1"); } catch (e) { return; }
+    showModal({
+      title: "开始教学？",
+      message: "是否开始一次简短的界面教学（约 10 步）？随时可按 Esc 退出。",
+      buttons: [
+        { text: "开始教学", value: "start", primary: true },
+        { text: "暂不", value: "later" }
+      ]
+    }).then(function (v) {
+      if (v === "start") startGuideTour();
+    });
+  }
+
   /* ================= 弹窗 ================= */
 
   function showModal(opts) {
@@ -1218,6 +1573,9 @@
     window.addEventListener("resize", updateTreeToggle);
     $("modeUpload").addEventListener("click", function () { switchMode("upload"); });
     $("modeDownload").addEventListener("click", function () { switchMode("download"); });
+    batchDownloadBtn.addEventListener("click", onBatchDownload);
+    batchClearBtn.addEventListener("click", onBatchClear);
+    guideBtn.addEventListener("click", startGuideTour);
     initUpload();
     initSearch();
     showLogin();

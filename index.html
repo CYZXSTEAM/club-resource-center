@@ -14,6 +14,7 @@
       <input type="search" id="globalSearch" placeholder="搜索文件名…" autocomplete="off">
       <div class="search-panel hidden" id="searchPanel"></div>
     </div>
+    <button class="btn ghost" id="guideBtn" hidden>🎓 教学</button>
     <div class="mode-toggle" id="modeToggle">
       <button class="mode-seg" id="modeUpload" data-mode="upload" type="button">上传</button>
       <button class="mode-seg active" id="modeDownload" data-mode="download" type="button">下载</button>
@@ -77,9 +78,17 @@
     </section>
   </main>
 
+  <!-- 批量操作栏（下载模式选择文件后出现） -->
+  <div id="batchBar" class="batch-bar hidden">
+    <span>已选择 <b id="batchCount">0</b> 项</span>
+    <button class="btn" id="batchDownloadBtn">批量下载</button>
+    <button class="btn" id="batchClearBtn">取消选择</button>
+  </div>
+
   <div id="modalRoot"></div>
 
-  <script src="config.js?v=8"></script>
-  <script src="app.js?v=8"></script>
+  <script src="config.js?v=12"></script>
+  <script src="guide.js?v=12"></script>
+  <script src="app.js?v=12"></script>
 </body>
 </html>

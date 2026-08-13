@@ -18,6 +18,9 @@ window.CLUB_CONFIG = {
   /* 顶栏搜索框占位文案 */
   searchPlaceholder: "搜索文件名…",
 
+  /* 首次登录是否自动询问开始教学（false 则仅保留顶栏"教学"按钮） */
+  autoGuide: true,
+
   /* 首页分类卡片：folder 是 Koofr 中对应分类子文件夹的名字
    * 需要先在 Koofr 网页端创建这些文件夹（见 README 部署步骤） */
   categories: [
