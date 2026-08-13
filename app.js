@@ -10,6 +10,17 @@
   var PREVIEW_EXT = { pdf: 1, jpg: 1, jpeg: 1, png: 1, gif: 1, webp: 1, bmp: 1, svg: 1 };
   var RECENT_LIMIT = 20;
   var SEARCH_LIMIT = 50;
+  var CACHE_TTL = 30000;   /* 列表/主页缓存时长：30 秒 */
+
+  var dataCache = {
+    lists: {},             /* path -> { files, ts } */
+    home: null             /* { cards, items, ts } */
+  };
+
+  function invalidatePath(path) {
+    delete dataCache.lists[path];
+    dataCache.home = null;
+  }
 
   var state = {
     selectedPath: null,   /* null 表示根节点（右侧显示主页） */
@@ -205,6 +216,8 @@
   }
 
   async function listFolder(path) {
+    var c = dataCache.lists[path];
+    if (c && Date.now() - c.ts < CACHE_TTL) return c.files;
     var res = await koofrFetch(listUrl(path));
     if (!res.ok) {
       var err = new Error(await apiErrorText(res));
@@ -212,7 +225,7 @@
       throw err;
     }
     var data = await res.json();
-    return (data.files || []).map(function (it) {
+    var items = (data.files || []).map(function (it) {
       return {
         name: it.name,
         type: it.type === "dir" ? "dir" : "file",
@@ -221,6 +234,8 @@
         contentType: it.contentType || ""
       };
     });
+    dataCache.lists[path] = { files: items, ts: Date.now() };
+    return items;
   }
 
   async function listDirs(path) {
@@ -683,6 +698,11 @@
   /* ================= 右侧内容 ================= */
 
   function loadHome() {
+    var c = dataCache.home;
+    if (c && Date.now() - c.ts < CACHE_TTL) {
+      renderHome(c.cards, c.items);
+      return Promise.resolve();
+    }
     content.innerHTML = '<div class="loading">正在加载主页…</div>';
     return Promise.all([
       ensureTreeChildren(ROOT),
@@ -691,6 +711,7 @@
       var dirs = results[0];
       var items = results[1].filter(function (it) { return it.relPath !== "/"; });
       return loadFolderCounts(dirs).then(function (cards) {
+        dataCache.home = { cards: cards, items: items, ts: Date.now() };
         renderHome(cards, items);
       });
     }).catch(function (err) {
@@ -1139,6 +1160,7 @@
     }
 
     var okCount = files.length - failed;
+    invalidatePath(targetPath);
     showBanner("上传完成：成功 " + okCount + " 个" + (failed ? "，失败 " + failed + " 个" : ""), failed > 0);
     if (state.mode === "download") {
       if (state.selectedPath === targetPath) {
@@ -1169,6 +1191,7 @@
     }
     try {
       await createFolder(parent, name);
+      invalidatePath(parent);
       var newPath = joinPath(parent, name);
       delete state.treeCache[parent];
       var dirs = await ensureTreeChildren(parent);

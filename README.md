@@ -19,6 +19,7 @@
 
 - 纯原生 HTML/CSS/JS，无框架、无构建步骤，只有一个网页 + 一个配置文件
 - 浏览器直接调用 Koofr REST API（`app.koofr.net/api/v2.1`），已实测支持跨域
+- 文件列表、文件夹统计与主页数据带 30 秒内存缓存，重复进入秒开；上传或新建文件夹后自动刷新对应缓存
 - 不使用 WebDAV：Koofr 的 WebDAV 端点不支持浏览器跨域直连
 - 界面布局与视觉借鉴自旧项目 [xiaoxuehua20.github.io](https://github.com/xiaoxuehua20/xiaoxuehua20.github.io) 的浏览模式
 
