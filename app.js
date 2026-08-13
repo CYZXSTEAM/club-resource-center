@@ -369,6 +369,8 @@
     mainView.hidden = true;
     logoutBtn.hidden = true;
     treeToggle.hidden = true;
+    searchWrap.hidden = true;
+    $("modeToggle").hidden = true;
     breadcrumb.innerHTML = "";
     content.innerHTML = "";
     tree.innerHTML = "";
@@ -385,6 +387,8 @@
     loginView.hidden = true;
     mainView.hidden = false;
     logoutBtn.hidden = false;
+    searchWrap.hidden = false;
+    $("modeToggle").hidden = false;
     updateTreeToggle();
     hideBanner();
   }
@@ -510,6 +514,17 @@
     return dirs;
   }
 
+  /* 展开路径上所有祖先节点，让指定文件夹在树中可见并高亮 */
+  async function revealPath(path) {
+    var rel = path.slice(ROOT.length).split("/").filter(Boolean);
+    var acc = ROOT;
+    for (var i = 0; i < rel.length; i++) {
+      acc = joinPath(acc, rel[i]);
+      await ensureTreeChildren(acc);
+      state.expanded[acc] = "open";
+    }
+  }
+
   function buildNodeHtml(path, depth, isRoot) {
     var name = fileName(path);
     var isOpen = state.expanded[path] === "open";
@@ -518,7 +533,7 @@
     var hasChildren = isOpen && Array.isArray(children) && children.length > 0;
     var icon = isRoot ? "📚" : treeIcon(name);
     var indent = depth * 14;
-    var active = isRoot ? (state.selectedPath === null) : (state.selectedPath === path);
+    var active = isRoot ? (state.selectedPath === null || state.selectedPath === path) : (state.selectedPath === path);
     var html = '<div class="tree-node" style="padding-left:' + indent + 'px">';
     if (isLoading) {
       html += '<span class="tree-toggle">…</span><span class="tree-label muted">加载中…</span>';
@@ -599,7 +614,7 @@
     content.innerHTML = '<div class="loading">加载中…</div>';
     try {
       state.currentFiles = await listFolder(path);
-      renderFolderFiles(state.currentFiles);
+      await renderFolderFiles(state.currentFiles);
     } catch (err) {
       if (err.auth) return;
       state.currentFiles = [];
@@ -731,37 +746,59 @@
     });
   }
 
-  function renderFolderFiles(files) {
+  async function renderFolderFiles(files) {
     var sorted = files.slice().sort(function (a, b) {
       if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
       return a.name.localeCompare(b.name, "zh-CN");
     });
-    if (!sorted.length) {
-      content.innerHTML = '<div class="empty">📂 此文件夹还没有文件，把文件拖到上方上传区。</div>';
-      return;
+    var dirs = sorted.filter(function (f) { return f.type === "dir"; });
+    var fileItems = sorted.filter(function (f) { return f.type === "file"; });
+
+    var head = '<div class="page-head">' +
+      '<h2>' + esc(fileName(state.selectedPath)) + '</h2>' +
+      '<p class="page-sub">' + esc(relPath(state.selectedPath) || "根目录") + ' · ' + fileItems.length + ' 个文件</p></div>';
+
+    var chipsHtml = "";
+    if (dirs.length) {
+      var counts = await Promise.all(dirs.map(function (d) {
+        return listFolder(d.path).then(function (fs) {
+          return fs.filter(function (f) { return f.type === "file"; }).length;
+        }).catch(function () { return null; });
+      }));
+      chipsHtml = '<div class="folder-bar">' + dirs.map(function (d, i) {
+        return '<button class="folder-chip" data-open="' + esc(d.path) + '">' +
+          '<span class="folder-name">📁 ' + esc(d.name) + '</span>' +
+          '<span class="count">' + (counts[i] === null ? "?" : counts[i]) + '</span></button>';
+      }).join("") + '</div>';
     }
-    var rows = sorted.map(function (f) {
-      if (f.type === "dir") {
-        return '<div class="file-row dir">' +
-          '<span class="file-icon">📁</span>' +
-          '<button class="file-name" data-open="' + esc(joinPath(state.selectedPath, f.name)) + '">' + esc(f.name) + '</button>' +
-          '<span class="file-path">文件夹</span>' +
-          '<span class="file-actions"></span></div>';
-      }
-      var full = joinPath(state.selectedPath, f.name);
-      var nameAttr = isPreviewable(f.name)
-        ? 'data-preview="' + esc(full) + '"'
-        : 'data-download="' + esc(full) + '"';
-      return '<div class="file-row">' +
-        '<span class="file-icon">' + fileIcon(f.name) + '</span>' +
-        '<button class="file-name" ' + nameAttr + '>' + esc(f.name) + '</button>' +
-        '<span class="file-meta">' + fmtSize(f.size) + ' · ' + fmtTime(f.modified) + '</span>' +
-        '<span class="file-actions">' +
-        (isPreviewable(f.name) ? '<button class="btn small" data-preview="' + esc(full) + '">预览</button>' : "") +
-        '<button class="btn small" data-download="' + esc(full) + '">下载</button>' +
-        '</span></div>';
-    }).join("");
-    content.innerHTML = '<div class="file-list">' + rows + '</div>';
+
+    var listHtml;
+    if (!fileItems.length) {
+      listHtml = '<div class="empty' + (dirs.length ? " small" : "") + '">' +
+        (dirs.length ? "此文件夹只有子文件夹，没有直接文件" : "📂 此文件夹还没有文件，切到上传模式添加。") + '</div>';
+    } else {
+      listHtml = '<div class="res-list">' + fileItems.map(function (f) {
+        var full = joinPath(state.selectedPath, f.name);
+        var previewable = isPreviewable(f.name);
+        var titleAttr = previewable
+          ? 'data-preview="' + esc(full) + '"'
+          : 'data-download="' + esc(full) + '"';
+        return '<div class="res-card">' +
+          '<div class="res-info">' +
+          '<div class="res-title" ' + titleAttr + '>' + esc(f.name) + '</div>' +
+          '<div class="res-meta">' +
+          '<span class="res-badge">' + esc((extOf(f.name) || "文件").toUpperCase()) + '</span>' +
+          '<span>' + fmtSize(f.size) + '</span>' +
+          '<span>' + fmtTime(f.modified) + '</span>' +
+          '</div></div>' +
+          '<div class="res-actions">' +
+          (previewable ? '<button class="btn edit small" data-preview="' + esc(full) + '">预览</button>' : "") +
+          '<button class="btn download small" data-download="' + esc(full) + '">下载</button>' +
+          '</div></div>';
+      }).join("") + '</div>';
+    }
+
+    content.innerHTML = head + chipsHtml + listHtml;
     wireFileActions();
   }
 
@@ -1012,6 +1049,19 @@
       fileInput.value = "";
     });
     newFolderBtn.addEventListener("click", onNewFolder);
+    /* 右侧下拉选择变化时，同步左侧目录树：展开祖先节点并高亮 */
+    folderSelect.addEventListener("change", function () {
+      var p = folderSelect.value || ROOT;
+      state.selectedPath = p;
+      if (state.mode === "upload") {
+        revealPath(p).then(function () { renderTree(); }).catch(function (err) {
+          if (err.auth) return;
+          renderTree();
+        });
+      } else {
+        renderTree();
+      }
+    });
   }
 
   /* ================= 搜索 ================= */
