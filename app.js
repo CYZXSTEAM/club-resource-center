@@ -11,15 +11,18 @@
   var RECENT_LIMIT = 20;
   var SEARCH_LIMIT = 50;
   var CACHE_TTL = 30000;   /* 列表/主页缓存时长：30 秒 */
+  var SEARCH_INDEX_TTL = 60000; /* 搜索索引缓存时长：60 秒 */
 
   var dataCache = {
     lists: {},             /* path -> { files, ts } */
     home: null             /* { cards, items, ts } */
   };
+  var searchIndex = null;  /* { entries, ts } 本地搜索索引 */
 
   function invalidatePath(path) {
     delete dataCache.lists[path];
     dataCache.home = null;
+    searchIndex = null;
   }
 
   var state = {
@@ -29,7 +32,8 @@
     expanded: {},         /* path -> false | "open" | "loading" */
     mode: "download",     /* "upload" 或 "download" */
     selected: {},         /* 下载模式勾选的文件路径集合 */
-    batchArmed: false     /* 批量下载二次确认状态 */
+    batchArmed: false,    /* 批量下载二次确认状态 */
+    folderArmed: false    /* 下载整个文件夹的二次确认状态 */
   };
 
   var memoryAuth = null;        /* 内存中的登录凭据，刷新即清 */
@@ -41,6 +45,7 @@
   var confirmPath = null;   /* 二次确认下载的卡片路径 */
   var confirmTimer = null;
   var batchTimer = null;
+  var folderConfirmTimer = null;
 
   var $ = function (id) { return document.getElementById(id); };
   var loginView = $("loginView");
@@ -62,6 +67,7 @@
   var content = $("content");
   var searchWrap = $("searchWrap");
   var searchInput = $("globalSearch");
+  var searchScope = $("searchScope");
   var searchPanel = $("searchPanel");
   var modalRoot = $("modalRoot");
   var batchBar = $("batchBar");
@@ -298,36 +304,8 @@
     if (!res.ok) throw new Error(await apiErrorText(res));
   }
 
-  async function searchFiles(query) {
-    var url = BASE + "/api/v2.1/search?query=" + encodeURIComponent(query) +
-      "&mountId=" + encodeURIComponent(MOUNT) +
-      "&path=" + encodePath(ROOT) +
-      "&limit=" + SEARCH_LIMIT;
-    var res = await koofrFetch(url);
-    if (!res.ok) throw new Error(await apiErrorText(res));
-    var data = await res.json();
-    return (data.hits || []).filter(function (h) {
-      var p = normalizePath(h.path);
-      return h.type === "file" && p.indexOf(ROOT) === 0;
-    }).map(function (h) {
-      return {
-        name: h.name,
-        path: normalizePath(h.path),
-        modified: Number(h.modified) || 0,
-        size: Number(h.size) || 0,
-        contentType: h.contentType || ""
-      };
-    });
-  }
-
-  function normalizePath(p) {
-    var s = String(p || "");
-    if (s.charAt(0) !== "/") s = "/" + s;
-    return s;
-  }
-
-  /* listrecursive 返回 NDJSON 流，逐行解析 */
-  async function listRecursiveFiles(path) {
+  /* listrecursive 返回 NDJSON 流，逐行解析（文件 + 文件夹） */
+  async function listRecursiveAll(path) {
     var url = BASE + "/content/api/v2.1/mounts/" + encodeURIComponent(MOUNT) + "/files/listrecursive?path=" + encodePath(path);
     var res = await koofrFetch(url);
     if (!res.ok) throw new Error(await apiErrorText(res));
@@ -339,10 +317,11 @@
       if (!line) continue;
       try {
         var item = JSON.parse(line);
-        if (item.type === "file" && item.file && item.file.type === "file") {
+        if (item.type === "file" && item.file && item.file.name !== "") {
           out.push({
             name: item.file.name,
             relPath: item.path,
+            type: item.file.type === "dir" ? "dir" : "file",
             modified: Number(item.file.modified) || 0,
             size: Number(item.file.size) || 0,
             contentType: item.file.contentType || ""
@@ -352,6 +331,120 @@
       if (out.length > 5000) break;
     }
     return out;
+  }
+
+  /* 最近更新只需要文件 */
+  async function listRecursiveFiles(path) {
+    var items = await listRecursiveAll(path);
+    return items.filter(function (it) { return it.type === "file"; }).map(function (it) {
+      return {
+        name: it.name,
+        relPath: it.relPath,
+        modified: it.modified,
+        size: it.size,
+        contentType: it.contentType
+      };
+    });
+  }
+
+  /* ================= 本地搜索（文件名/文件夹名/类型 + 拼音 + 模糊） ================= */
+
+  var TYPE_GROUPS = [
+    { label: "文档", exts: ["doc", "docx", "txt", "md", "rtf", "wps", "odt", "pdf"] },
+    { label: "表格", exts: ["xls", "xlsx", "csv", "ods"] },
+    { label: "演示", exts: ["ppt", "pptx", "odp"] },
+    { label: "PDF", exts: ["pdf"] },
+    { label: "图片", exts: ["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "ico"] },
+    { label: "视频", exts: ["mp4", "mov", "avi", "mkv", "flv", "wmv", "webm"] },
+    { label: "音频", exts: ["mp3", "wav", "flac", "aac", "ogg", "m4a"] },
+    { label: "压缩包", exts: ["zip", "rar", "7z", "tar", "gz", "bz2"] },
+    { label: "代码", exts: ["js", "html", "css", "py", "java", "c", "cpp", "json", "xml", "sh"] }
+  ];
+
+  function fileTypeLabel(name) {
+    var ext = extOf(name);
+    for (var i = 0; i < TYPE_GROUPS.length; i++) {
+      if (TYPE_GROUPS[i].exts.indexOf(ext) >= 0) return TYPE_GROUPS[i].label;
+    }
+    return "其他";
+  }
+
+  /* 中文转拼音：全拼 + 首字母；库不可用时返回空，中文子串匹配仍可用 */
+  function pinyinOf(text) {
+    try {
+      var py = window.pinyinPro;
+      if (!py || typeof py.pinyin !== "function") return { pinyin: "", initials: "" };
+      var opts = { toneType: "none", type: "array", nonZh: "removed" };
+      var full = py.pinyin(String(text), opts).join("").toLowerCase().replace(/\s+/g, "");
+      var first = py.pinyin(String(text), Object.assign({ pattern: "first" }, opts)).join("").toLowerCase().replace(/\s+/g, "");
+      return { pinyin: full, initials: first };
+    } catch (e) {
+      return { pinyin: "", initials: "" };
+    }
+  }
+
+  function normalizeAbs(root, rel) {
+    if (rel === "/") return root;
+    if (rel.charAt(0) === "/") return root + rel;
+    return root + "/" + rel;
+  }
+
+  async function ensureSearchIndex() {
+    var now = Date.now();
+    if (searchIndex && now - searchIndex.ts < SEARCH_INDEX_TTL) return searchIndex;
+    var items = await listRecursiveAll(ROOT);
+    var entries = [];
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      if (it.relPath === "/") continue;
+      var py = pinyinOf(it.name);
+      entries.push({
+        name: it.name,
+        path: normalizeAbs(ROOT, it.relPath),
+        kind: it.type,
+        size: it.size || 0,
+        modified: it.modified || 0,
+        pinyin: py.pinyin,
+        initials: py.initials,
+        ext: extOf(it.name),
+        typeLabel: fileTypeLabel(it.name)
+      });
+    }
+    searchIndex = { entries: entries, ts: now };
+    return searchIndex;
+  }
+
+  /* 子串匹配 + 字符顺序模糊匹配 */
+  function fuzzyMatch(hay, q) {
+    hay = String(hay || "").toLowerCase();
+    q = String(q || "").toLowerCase();
+    if (!q) return false;
+    if (hay.indexOf(q) >= 0) return true;
+    var i = 0;
+    for (var j = 0; j < hay.length && i < q.length; j++) {
+      if (hay.charAt(j) === q.charAt(i)) i++;
+    }
+    return i === q.length;
+  }
+
+  function entryMatches(entry, q, scope) {
+    var qc = q.replace(/\s+/g, "");
+    if (scope === "file" && entry.kind !== "file") return false;
+    if (scope === "folder" && entry.kind !== "dir") return false;
+    if (scope === "type" && entry.kind !== "file") return false;
+    if (scope === "all" || scope === "file" || scope === "folder") {
+      if (fuzzyMatch(entry.name, q)) return true;
+      if (entry.pinyin && fuzzyMatch(entry.pinyin, qc)) return true;
+      if (entry.initials && fuzzyMatch(entry.initials, qc)) return true;
+      if (scope !== "all") return false;
+    }
+    if (scope === "all" || scope === "type") {
+      if (entry.kind === "file") {
+        if (fuzzyMatch(entry.ext, qc)) return true;
+        if (fuzzyMatch(entry.typeLabel, q)) return true;
+      }
+    }
+    return false;
   }
 
   /* XHR 上传（为了拿到进度） */
@@ -419,7 +512,8 @@
       expanded: {},
       mode: "download",
       selected: {},
-      batchArmed: false
+      batchArmed: false,
+      folderArmed: false
     };
   }
 
@@ -554,15 +648,24 @@
     updateBatchBar();
   }
 
-  function switchMode(mode) {
+  function switchMode(mode, keepPosition) {
     if (state.mode === mode) return;
     state.mode = mode;
     applyModeLayout(mode);
     if (mode === "upload") {
       fillFolderSelect(state.selectedPath || ROOT);
-      renderTree();
+      if (keepPosition && state.selectedPath) {
+        syncTreeToSelection(state.selectedPath);
+      } else {
+        renderTree();
+      }
     } else {
-      selectRoot();
+      /* 两种模式共享当前选中位置：上传模式里打开的文件夹切回下载也应保持 */
+      if (keepPosition && state.selectedPath && state.selectedPath !== ROOT) {
+        selectFolder(state.selectedPath);
+      } else {
+        selectRoot();
+      }
     }
   }
 
@@ -590,6 +693,8 @@
 
   /* 展开路径上所有祖先节点，让指定文件夹在树中可见并高亮 */
   async function revealPath(path) {
+    await ensureTreeChildren(ROOT);
+    state.expanded[ROOT] = "open";
     var rel = path.slice(ROOT.length).split("/").filter(Boolean);
     var acc = ROOT;
     for (var i = 0; i < rel.length; i++) {
@@ -597,6 +702,15 @@
       await ensureTreeChildren(acc);
       state.expanded[acc] = "open";
     }
+  }
+
+  /* 打开文件夹时，自动在左侧目录树展开该文件夹及其所有父级 */
+  function syncTreeToSelection(path) {
+    revealPath(path).then(function () {
+      renderTree();
+    }).catch(function (err) {
+      if (!err.auth) renderTree();
+    });
   }
 
   function buildNodeHtml(path, depth, isRoot) {
@@ -684,6 +798,7 @@
     closeSearchPanel();
     closeDrawer();
     fillFolderSelect(path);
+    syncTreeToSelection(path);
     if (state.mode === "upload") return;
     content.innerHTML = '<div class="loading">加载中…</div>';
     try {
@@ -874,12 +989,36 @@
       '</div>' +
       '<div class="folder-bar">' +
       '<div class="folder-chip active">全部 <span class="count">' + fileItems.length + '</span></div>' +
+      '<button class="folder-chip folder-dl" data-download-folder="1">' + ICONS.download + '<span>下载整个文件夹</span></button>' +
       folderChips +
       '</div>' +
       '<div class="res-list">' + (cards || '<div class="empty">暂无资料<br>切到「上传」模式添加文件</div>') + '</div>';
 
     var homeBtn = content.querySelector("[data-home]");
     if (homeBtn) homeBtn.addEventListener("click", selectRoot);
+    var dfBtn = content.querySelector("[data-download-folder]");
+    if (dfBtn) {
+      dfBtn.addEventListener("click", function () {
+        if (!state.folderArmed) {
+          state.folderArmed = true;
+          dfBtn.innerHTML = "✔ 再次点击确认下载";
+          clearTimeout(folderConfirmTimer);
+          folderConfirmTimer = setTimeout(function () {
+            resetFolderDlBtn(dfBtn);
+          }, 3000);
+          return;
+        }
+        clearTimeout(folderConfirmTimer);
+        resetFolderDlBtn(dfBtn);
+        showBanner("正在打包下载…", false);
+        downloadFolderZip(state.selectedPath).then(function () {
+          showBanner("已开始下载整个文件夹", false);
+        }).catch(function (err) {
+          if (err.auth) return;
+          showBanner(friendlyError(err), true);
+        });
+      });
+    }
     var cardEls = content.querySelectorAll(".res-card[data-card-previewable]");
     Array.prototype.forEach.call(cardEls, function (card) {
       card.addEventListener("click", function (e) {
@@ -933,6 +1072,8 @@
   function clearSelection() {
     state.selected = {};
     state.batchArmed = false;
+    state.folderArmed = false;
+    clearTimeout(folderConfirmTimer);
     if (confirmPath) {
       clearTimeout(confirmTimer);
       confirmTimer = null;
@@ -952,6 +1093,9 @@
   function updateCardSelection() {
     Array.prototype.forEach.call(content.querySelectorAll(".res-card[data-path]"), function (card) {
       card.classList.toggle("selected", !!state.selected[card.getAttribute("data-path")]);
+    });
+    Array.prototype.forEach.call(content.querySelectorAll(".res-select"), function (cb) {
+      cb.checked = !!state.selected[cb.getAttribute("data-select-path")];
     });
   }
 
@@ -1012,6 +1156,19 @@
     a.click();
     a.remove();
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 60000);
+  }
+
+  /* 下载整个文件夹：不传文件列表时，Koofr 返回整包 ZIP */
+  function downloadFolderZip(folderPath) {
+    return batchDownloadZip(folderPath, []);
+  }
+
+  /* 复位"下载整个文件夹"按钮的确认态与文案 */
+  function resetFolderDlBtn(btn) {
+    state.folderArmed = false;
+    if (btn && btn.isConnected) {
+      btn.innerHTML = ICONS.download + '<span>下载整个文件夹</span>';
+    }
   }
 
   async function onBatchDownload() {
@@ -1302,7 +1459,7 @@
       var q = searchInput.value.trim();
       clearTimeout(searchTimer);
       if (!q) { closeSearchPanel(); return; }
-      searchTimer = setTimeout(function () { runSearch(q); }, 400);
+      searchTimer = setTimeout(function () { runSearch(q); }, 350);
     });
     searchInput.addEventListener("keydown", function (e) {
       if (e.key === "Enter") {
@@ -1311,27 +1468,55 @@
         runSearch(searchInput.value.trim());
       }
     });
+    searchScope.addEventListener("change", function () {
+      updateSearchPlaceholder();
+      var q = searchInput.value.trim();
+      if (q) runSearch(q);
+      else searchInput.focus();
+    });
     document.addEventListener("click", function (e) {
       if (!searchWrap.contains(e.target)) closeSearchPanel();
     });
+    updateSearchPlaceholder();
+  }
+
+  function updateSearchPlaceholder() {
+    var map = {
+      all: "搜索文件名 / 文件夹名 / 类型",
+      file: "搜索文件名，支持拼音",
+      folder: "搜索文件夹名，支持拼音",
+      type: "搜索文件类型，如 pdf / 文档"
+    };
+    searchInput.placeholder = map[searchScope.value] || CONFIG.searchPlaceholder || "搜索…";
   }
 
   async function runSearch(q) {
     if (!q) { closeSearchPanel(); return; }
+    var scope = searchScope.value || "all";
     searchPanel.innerHTML = '<div class="search-item muted">搜索中…</div>';
     searchPanel.hidden = false;
     try {
-      var hits = await searchFiles(q);
+      var idx = await ensureSearchIndex();
       if (searchInput.value.trim() !== q) return;
+      var ql = q.toLowerCase().trim();
+      var hits = [];
+      for (var i = 0; i < idx.entries.length && hits.length < SEARCH_LIMIT; i++) {
+        if (entryMatches(idx.entries[i], ql, scope)) hits.push(idx.entries[i]);
+      }
       if (!hits.length) {
-        searchPanel.innerHTML = '<div class="search-item muted">没有找到匹配的文件</div>';
+        searchPanel.innerHTML = '<div class="search-item muted">没有找到匹配的结果</div>';
         return;
       }
       searchPanel.innerHTML = hits.map(function (h) {
-        return '<button class="search-item" data-open="' + esc(dirOf(h.path)) + '">' +
-          '<span class="search-name">' + esc(h.name) + '</span>' +
-          '<span class="search-path">' + esc(relPath(dirOf(h.path))) + '</span>' +
-          '<span class="search-time">' + fmtTime(h.modified) + '</span></button>';
+        var dir = h.kind === "dir" ? h.path : dirOf(h.path);
+        var icon = h.kind === "dir" ? ICONS.folder : ICONS.file;
+        var meta = h.kind === "dir"
+          ? "文件夹"
+          : esc(h.typeLabel) + " · " + fmtSize(h.size);
+        return '<button class="search-item" data-open="' + esc(dir) + '">' +
+          '<span class="search-name">' + icon + esc(h.name) + '</span>' +
+          '<span class="search-path">' + esc(relPath(dir)) + '</span>' +
+          '<span class="search-time">' + meta + '</span></button>';
       }).join("");
       searchPanel.hidden = false;
       Array.prototype.forEach.call(searchPanel.querySelectorAll("[data-open]"), function (b) {
@@ -1638,8 +1823,8 @@
     });
     sidebarMask.addEventListener("click", closeDrawer);
     window.addEventListener("resize", updateTreeToggle);
-    $("modeUpload").addEventListener("click", function () { switchMode("upload"); });
-    $("modeDownload").addEventListener("click", function () { switchMode("download"); });
+    $("modeUpload").addEventListener("click", function () { switchMode("upload", true); });
+    $("modeDownload").addEventListener("click", function () { switchMode("download", true); });
     batchDownloadBtn.addEventListener("click", onBatchDownload);
     batchClearBtn.addEventListener("click", onBatchClear);
     guideBtn.addEventListener("click", startGuideTour);
