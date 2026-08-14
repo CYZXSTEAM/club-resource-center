@@ -70,6 +70,49 @@
   var batchClearBtn = $("batchClearBtn");
   var guideBtn = $("guideBtn");
 
+  /* ================= 内联 SVG 图标（Linear 风格，统一 1.6 描边） ================= */
+  function svgIcon(inner, cls) {
+    return '<svg class="ico' + (cls ? " " + cls : "") + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">' + inner + '</svg>';
+  }
+  var ICONS = {
+    logo: svgIcon('<rect x="3.5" y="4" width="17" height="5" rx="1.5"></rect><rect x="3.5" y="9.5" width="17" height="5" rx="1.5"></rect><rect x="3.5" y="15" width="17" height="5" rx="1.5"></rect>'),
+    folder: svgIcon('<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h4l2 2h7A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5v-10z"></path>'),
+    file: svgIcon('<path d="M6.5 3.5h7l4 4v12a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1z"></path><path d="M13.5 3.5v4h4"></path>'),
+    pdf: svgIcon('<path d="M6.5 3.5h7l4 4v12a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1z"></path><path d="M13.5 3.5v4h4"></path><path d="M9 13.5h6M9 16.5h3.5"></path>'),
+    doc: svgIcon('<path d="M6.5 3.5h7l4 4v12a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1z"></path><path d="M13.5 3.5v4h4"></path><path d="M9 13.5h6M9 16.5h6"></path>'),
+    sheet: svgIcon('<rect x="4" y="3.5" width="16" height="17" rx="2"></rect><path d="M4 9h16M4 14.5h16M9.5 3.5v17M14.5 3.5v17"></path>'),
+    slide: svgIcon('<rect x="3.5" y="4.5" width="17" height="12" rx="2"></rect><path d="M9 20h6M12 16.5V20"></path>'),
+    archive: svgIcon('<path d="M4 8.5h16v10a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5v-10z"></path><path d="M3.5 8.5L5 4.5h14l1.5 4"></path><path d="M10 12.5h4"></path>'),
+    video: svgIcon('<rect x="3" y="5" width="13.5" height="14" rx="2"></rect><path d="M16.5 10l4.5-2.5v9L16.5 14"></path>'),
+    audio: svgIcon('<path d="M9 17.5V6l8-2v11.5"></path><circle cx="6.5" cy="17.5" r="2.5"></circle><circle cx="14.5" cy="15.5" r="2.5"></circle>'),
+    image: svgIcon('<rect x="3" y="5" width="18" height="14" rx="2"></rect><circle cx="9" cy="10" r="1.6"></circle><path d="M3.5 16.5l5-4.5 4 3.5 3-2.5 5 4"></path>'),
+    book: svgIcon('<path d="M12 6.2C10.4 4.9 8.3 4 6 4H3.5v13.5H6c2.3 0 4.4.9 6 2.3 1.6-1.4 3.7-2.3 6-2.3h2.5V4H18c-2.3 0-4.4.9-6 2.2z"></path><path d="M12 6.2v13.6"></path>'),
+    trophy: svgIcon('<path d="M8 3.5h8v6.5a4 4 0 0 1-8 0V3.5z"></path><path d="M8 5H4.5v1.5A3 3 0 0 0 7.5 9.5M16 5h3.5v1.5a3 3 0 0 1-3 3"></path><path d="M12 14v3M8.5 20.5h7"></path>'),
+    camera: svgIcon('<path d="M4 8.5h3l1.8-2.5h6.4L17 8.5h3a1 1 0 0 1 1 1v8.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9.5a1 1 0 0 1 1-1z"></path><circle cx="12" cy="13" r="3.2"></circle>'),
+    note: svgIcon('<path d="M6 3.5h12a1 1 0 0 1 1 1v13l-4.5 4.5H6a1 1 0 0 1-1-1v-16a1 1 0 0 1 1-1z"></path><path d="M14.5 18.5V22M8 8.5h8M8 12h8"></path>'),
+    home: svgIcon('<path d="M3.5 10.5L12 3.5l8.5 7"></path><path d="M5.5 9v11h13V9"></path>'),
+    search: svgIcon('<circle cx="11" cy="11" r="6"></circle><path d="M20.5 20.5L15.5 15.5"></path>'),
+    download: svgIcon('<path d="M12 4v10M8 10l4 4 4-4"></path><path d="M4.5 20h15"></path>'),
+    upload: svgIcon('<path d="M12 14V4M8 8l4-4 4 4"></path><path d="M4.5 20h15"></path>'),
+    preview: svgIcon('<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"></path><circle cx="12" cy="12" r="2.8"></circle>'),
+    plus: svgIcon('<path d="M12 5v14M5 12h14"></path>'),
+    check: svgIcon('<path d="M5 12.5l4.5 4.5L19 7"></path>'),
+    chevronRight: svgIcon('<path d="M9 5.5l6.5 6.5L9 18.5"></path>'),
+    chevronDown: svgIcon('<path d="M5.5 9L12 15.5 18.5 9"></path>'),
+    menu: svgIcon('<path d="M4 6.5h16M4 12h16M4 17.5h16"></path>'),
+    logout: svgIcon('<path d="M14 4H6.5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1H14"></path><path d="M17 8.5l3.5 3.5-3.5 3.5"></path><path d="M20.5 12H10"></path>'),
+    guide: svgIcon('<path d="M12 4.5L2.5 9.5 12 14.5l9.5-5L12 4.5z"></path><path d="M6 12v4c0 1.5 2.7 2.8 6 2.8s6-1.3 6-2.8v-4"></path><path d="M21.5 9.5v5"></path>')
+  };
+  /* config.js 里的分类 emoji 图标 → SVG 映射（config.js 保持零改动） */
+  var EMOJI_ICON_MAP = {
+    "\u{1F4DA}": ICONS.book,
+    "\u{1F3C6}": ICONS.trophy,
+    "\u{1F4F7}": ICONS.camera,
+    "\u{1F4DD}": ICONS.note,
+    "\u{1F4C1}": ICONS.folder,
+    "\u{1F4C2}": ICONS.folder
+  };
+
   /* ================= 登录凭据（仅存内存，刷新即清） ================= */
 
   function authError() {
@@ -139,15 +182,15 @@
 
   function fileIcon(name) {
     var ext = extOf(name);
-    if (ext === "pdf") return "📕";
-    if (["doc", "docx"].indexOf(ext) >= 0) return "📘";
-    if (["xls", "xlsx", "csv"].indexOf(ext) >= 0) return "📊";
-    if (["ppt", "pptx"].indexOf(ext) >= 0) return "📽️";
-    if (["zip", "rar", "7z", "tar", "gz"].indexOf(ext) >= 0) return "📦";
-    if (["mp4", "mov", "avi", "mkv"].indexOf(ext) >= 0) return "🎬";
-    if (["mp3", "wav", "flac", "aac"].indexOf(ext) >= 0) return "🎵";
-    if (["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"].indexOf(ext) >= 0) return "🖼️";
-    return "📄";
+    if (ext === "pdf") return ICONS.pdf;
+    if (["doc", "docx"].indexOf(ext) >= 0) return ICONS.doc;
+    if (["xls", "xlsx", "csv"].indexOf(ext) >= 0) return ICONS.sheet;
+    if (["ppt", "pptx"].indexOf(ext) >= 0) return ICONS.slide;
+    if (["zip", "rar", "7z", "tar", "gz"].indexOf(ext) >= 0) return ICONS.archive;
+    if (["mp4", "mov", "avi", "mkv"].indexOf(ext) >= 0) return ICONS.video;
+    if (["mp3", "wav", "flac", "aac"].indexOf(ext) >= 0) return ICONS.audio;
+    if (["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"].indexOf(ext) >= 0) return ICONS.image;
+    return ICONS.file;
   }
 
   function fmtSize(n) {
@@ -535,7 +578,7 @@
 
   function treeIcon(name) {
     var c = categoryMeta(name);
-    return c && c.icon ? c.icon : "📁";
+    return c && EMOJI_ICON_MAP[c.icon] ? EMOJI_ICON_MAP[c.icon] : ICONS.folder;
   }
 
   async function ensureTreeChildren(path) {
@@ -562,14 +605,14 @@
     var isLoading = state.expanded[path] === "loading";
     var children = state.treeCache[path];
     var hasChildren = isOpen && Array.isArray(children) && children.length > 0;
-    var icon = isRoot ? "📚" : treeIcon(name);
+    var icon = isRoot ? ICONS.logo : treeIcon(name);
     var indent = depth * 14;
     var active = isRoot ? (state.selectedPath === null || state.selectedPath === path) : (state.selectedPath === path);
     var html = '<div class="tree-node" style="padding-left:' + indent + 'px">';
     if (isLoading) {
-      html += '<span class="tree-toggle">…</span><span class="tree-label muted">加载中…</span>';
+      html += '<span class="tree-toggle"><span class="tree-spinner"></span></span><span class="tree-label muted">加载中…</span>';
     } else {
-      html += '<button class="tree-toggle" data-toggle="' + esc(path) + '">' + (isOpen ? "▾" : "▸") + '</button>';
+      html += '<button class="tree-toggle" data-toggle="' + esc(path) + '">' + (isOpen ? ICONS.chevronDown : ICONS.chevronRight) + '</button>';
       html += '<button class="tree-label' + (active ? " active" : "") + '" data-select="' + esc(path) +
         '" data-root="' + (isRoot ? 1 : 0) + '">' +
         '<span class="tree-icon">' + icon + '</span>' +
@@ -670,12 +713,12 @@
 
   function renderBreadcrumb() {
     if (state.selectedPath === null) {
-      breadcrumb.innerHTML = '<span class="crumb current">🏠 主页</span>';
+      breadcrumb.innerHTML = '<span class="crumb current">' + ICONS.home + '<span>主页</span></span>';
       return;
     }
     var rel = state.selectedPath.slice(ROOT.length).split("/").filter(Boolean);
     var acc = ROOT;
-    var html = '<button class="crumb-link" data-root="1">🏠 主页</button>' +
+    var html = '<button class="crumb-link" data-root="1">' + ICONS.home + '<span>主页</span></button>' +
       '<span class="crumb-sep">/</span>' +
       '<span class="crumb current">' + esc(fileName(ROOT)) + '</span>';
     rel.forEach(function (seg, i) {
@@ -758,9 +801,9 @@
             '<span class="chip">' + esc(chip) + '</span>' +
             '<div class="update-info">' +
             '<div class="update-title">' + esc(u.name) + '</div>' +
-            '<div class="update-meta">📄 文件 · ' + fmtSize(u.size) + ' · ' + fmtTime(u.modified) + '</div>' +
+            '<div class="update-meta">' + ICONS.file + '<span>文件 · ' + fmtSize(u.size) + ' · ' + fmtTime(u.modified) + '</span></div>' +
             '</div>' +
-            '<span class="go">→</span></button>';
+            '<span class="go">' + ICONS.chevronRight + '</span></button>';
         }).join("")
       : '<div class="empty">暂无资料更新</div>';
     content.innerHTML =
@@ -797,7 +840,7 @@
 
     var folderChips = dirs.map(function (d, i) {
       return '<div class="folder-chip" data-open="' + esc(d.path) + '" title="进入「' + esc(d.name) + '」">' +
-        '<span>📁</span>' +
+        '<span class="chip-ico">' + ICONS.folder + '</span>' +
         '<span class="folder-name">' + esc(d.name) + '</span>' +
         '<span class="count">' + (chips[i] === null ? "?" : chips[i]) + '</span></div>';
     }).join("");
@@ -815,11 +858,11 @@
         '</label>' +
         '<div class="res-info">' +
         '<div class="res-title">' + esc(f.name) + '</div>' +
-        '<div class="res-meta">📄 ' + esc(ext) + ' · 文件 · ' + fmtSize(f.size) + ' · ' + fmtTime(f.modified) + '</div>' +
+        '<div class="res-meta">' + ICONS.file + '<span>' + esc(ext) + ' · 文件 · ' + fmtSize(f.size) + ' · ' + fmtTime(f.modified) + '</span></div>' +
         '</div>' +
         '<div class="res-actions">' +
-        (previewable ? '<button class="btn edit" data-preview="' + esc(full) + '">预览</button>' : "") +
-        '<button class="btn download" data-confirm-download="' + esc(full) + '">⭳ 下载</button>' +
+        (previewable ? '<button class="btn edit" data-preview="' + esc(full) + '">' + ICONS.preview + '<span>预览</span></button>' : "") +
+        '<button class="btn download" data-confirm-download="' + esc(full) + '">' + ICONS.download + '<span>下载</span></button>' +
         '</div></div>';
     }).join("");
 
@@ -947,7 +990,7 @@
       var armed = confirmPath === path;
       card.classList.toggle("armed", armed);
       var btn = card.querySelector(".btn.download");
-      if (btn) btn.textContent = armed ? "✔ 再次点击下载" : "⭳ 下载";
+      if (btn) btn.innerHTML = (armed ? ICONS.check : ICONS.download) + '<span>' + (armed ? "再次点击下载" : "下载") + '</span>';
     });
   }
 
@@ -1575,7 +1618,8 @@
     /* 每次进入页面都要求重新登录：清掉旧版本可能残留的会话凭据 */
     try { sessionStorage.removeItem(AUTH_KEY); } catch (e) { /* 忽略 */ }
     clearAuth();
-    $("brandTitle").textContent = CONFIG.siteTitle || "社团资源库";
+    var brandTextEl = $("brandText");
+    if (brandTextEl) brandTextEl.textContent = CONFIG.siteTitle || "社团资源库";
     document.title = CONFIG.siteTitle || "社团资源库";
     searchInput.placeholder = CONFIG.searchPlaceholder || "搜索文件名…";
     $("loginForm").addEventListener("submit", doLogin);
