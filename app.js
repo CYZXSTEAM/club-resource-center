@@ -11,15 +11,18 @@
   var RECENT_LIMIT = 20;
   var SEARCH_LIMIT = 50;
   var CACHE_TTL = 30000;   /* 列表/主页缓存时长：30 秒 */
+  var SEARCH_INDEX_TTL = 60000; /* 搜索索引缓存时长：60 秒 */
 
   var dataCache = {
     lists: {},             /* path -> { files, ts } */
     home: null             /* { cards, items, ts } */
   };
+  var searchIndex = null;  /* { entries, ts } 本地搜索索引 */
 
   function invalidatePath(path) {
     delete dataCache.lists[path];
     dataCache.home = null;
+    searchIndex = null;
   }
 
   var state = {
@@ -29,7 +32,8 @@
     expanded: {},         /* path -> false | "open" | "loading" */
     mode: "download",     /* "upload" 或 "download" */
     selected: {},         /* 下载模式勾选的文件路径集合 */
-    batchArmed: false     /* 批量下载二次确认状态 */
+    batchArmed: false,    /* 批量下载二次确认状态 */
+    folderArmed: false    /* 下载整个文件夹的二次确认状态 */
   };
 
   var memoryAuth = null;        /* 内存中的登录凭据，刷新即清 */
@@ -41,6 +45,7 @@
   var confirmPath = null;   /* 二次确认下载的卡片路径 */
   var confirmTimer = null;
   var batchTimer = null;
+  var folderConfirmTimer = null;
 
   var $ = function (id) { return document.getElementById(id); };
   var loginView = $("loginView");
@@ -62,6 +67,7 @@
   var content = $("content");
   var searchWrap = $("searchWrap");
   var searchInput = $("globalSearch");
+  var searchScope = $("searchScope");
   var searchPanel = $("searchPanel");
   var modalRoot = $("modalRoot");
   var batchBar = $("batchBar");
@@ -69,6 +75,49 @@
   var batchDownloadBtn = $("batchDownloadBtn");
   var batchClearBtn = $("batchClearBtn");
   var guideBtn = $("guideBtn");
+
+  /* ================= 内联 SVG 图标（Linear 风格，统一 1.6 描边） ================= */
+  function svgIcon(inner, cls) {
+    return '<svg class="ico' + (cls ? " " + cls : "") + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">' + inner + '</svg>';
+  }
+  var ICONS = {
+    logo: svgIcon('<rect x="3.5" y="4" width="17" height="5" rx="1.5"></rect><rect x="3.5" y="9.5" width="17" height="5" rx="1.5"></rect><rect x="3.5" y="15" width="17" height="5" rx="1.5"></rect>'),
+    folder: svgIcon('<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h4l2 2h7A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5v-10z"></path>'),
+    file: svgIcon('<path d="M6.5 3.5h7l4 4v12a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1z"></path><path d="M13.5 3.5v4h4"></path>'),
+    pdf: svgIcon('<path d="M6.5 3.5h7l4 4v12a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1z"></path><path d="M13.5 3.5v4h4"></path><path d="M9 13.5h6M9 16.5h3.5"></path>'),
+    doc: svgIcon('<path d="M6.5 3.5h7l4 4v12a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1z"></path><path d="M13.5 3.5v4h4"></path><path d="M9 13.5h6M9 16.5h6"></path>'),
+    sheet: svgIcon('<rect x="4" y="3.5" width="16" height="17" rx="2"></rect><path d="M4 9h16M4 14.5h16M9.5 3.5v17M14.5 3.5v17"></path>'),
+    slide: svgIcon('<rect x="3.5" y="4.5" width="17" height="12" rx="2"></rect><path d="M9 20h6M12 16.5V20"></path>'),
+    archive: svgIcon('<path d="M4 8.5h16v10a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5v-10z"></path><path d="M3.5 8.5L5 4.5h14l1.5 4"></path><path d="M10 12.5h4"></path>'),
+    video: svgIcon('<rect x="3" y="5" width="13.5" height="14" rx="2"></rect><path d="M16.5 10l4.5-2.5v9L16.5 14"></path>'),
+    audio: svgIcon('<path d="M9 17.5V6l8-2v11.5"></path><circle cx="6.5" cy="17.5" r="2.5"></circle><circle cx="14.5" cy="15.5" r="2.5"></circle>'),
+    image: svgIcon('<rect x="3" y="5" width="18" height="14" rx="2"></rect><circle cx="9" cy="10" r="1.6"></circle><path d="M3.5 16.5l5-4.5 4 3.5 3-2.5 5 4"></path>'),
+    book: svgIcon('<path d="M12 6.2C10.4 4.9 8.3 4 6 4H3.5v13.5H6c2.3 0 4.4.9 6 2.3 1.6-1.4 3.7-2.3 6-2.3h2.5V4H18c-2.3 0-4.4.9-6 2.2z"></path><path d="M12 6.2v13.6"></path>'),
+    trophy: svgIcon('<path d="M8 3.5h8v6.5a4 4 0 0 1-8 0V3.5z"></path><path d="M8 5H4.5v1.5A3 3 0 0 0 7.5 9.5M16 5h3.5v1.5a3 3 0 0 1-3 3"></path><path d="M12 14v3M8.5 20.5h7"></path>'),
+    camera: svgIcon('<path d="M4 8.5h3l1.8-2.5h6.4L17 8.5h3a1 1 0 0 1 1 1v8.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9.5a1 1 0 0 1 1-1z"></path><circle cx="12" cy="13" r="3.2"></circle>'),
+    note: svgIcon('<path d="M6 3.5h12a1 1 0 0 1 1 1v13l-4.5 4.5H6a1 1 0 0 1-1-1v-16a1 1 0 0 1 1-1z"></path><path d="M14.5 18.5V22M8 8.5h8M8 12h8"></path>'),
+    home: svgIcon('<path d="M3.5 10.5L12 3.5l8.5 7"></path><path d="M5.5 9v11h13V9"></path>'),
+    search: svgIcon('<circle cx="11" cy="11" r="6"></circle><path d="M20.5 20.5L15.5 15.5"></path>'),
+    download: svgIcon('<path d="M12 4v10M8 10l4 4 4-4"></path><path d="M4.5 20h15"></path>'),
+    upload: svgIcon('<path d="M12 14V4M8 8l4-4 4 4"></path><path d="M4.5 20h15"></path>'),
+    preview: svgIcon('<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"></path><circle cx="12" cy="12" r="2.8"></circle>'),
+    plus: svgIcon('<path d="M12 5v14M5 12h14"></path>'),
+    check: svgIcon('<path d="M5 12.5l4.5 4.5L19 7"></path>'),
+    chevronRight: svgIcon('<path d="M9 5.5l6.5 6.5L9 18.5"></path>'),
+    chevronDown: svgIcon('<path d="M5.5 9L12 15.5 18.5 9"></path>'),
+    menu: svgIcon('<path d="M4 6.5h16M4 12h16M4 17.5h16"></path>'),
+    logout: svgIcon('<path d="M14 4H6.5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1H14"></path><path d="M17 8.5l3.5 3.5-3.5 3.5"></path><path d="M20.5 12H10"></path>'),
+    guide: svgIcon('<path d="M12 4.5L2.5 9.5 12 14.5l9.5-5L12 4.5z"></path><path d="M6 12v4c0 1.5 2.7 2.8 6 2.8s6-1.3 6-2.8v-4"></path><path d="M21.5 9.5v5"></path>')
+  };
+  /* config.js 里的分类 emoji 图标 → SVG 映射（config.js 保持零改动） */
+  var EMOJI_ICON_MAP = {
+    "\u{1F4DA}": ICONS.book,
+    "\u{1F3C6}": ICONS.trophy,
+    "\u{1F4F7}": ICONS.camera,
+    "\u{1F4DD}": ICONS.note,
+    "\u{1F4C1}": ICONS.folder,
+    "\u{1F4C2}": ICONS.folder
+  };
 
   /* ================= 登录凭据（仅存内存，刷新即清） ================= */
 
@@ -139,15 +188,15 @@
 
   function fileIcon(name) {
     var ext = extOf(name);
-    if (ext === "pdf") return "📕";
-    if (["doc", "docx"].indexOf(ext) >= 0) return "📘";
-    if (["xls", "xlsx", "csv"].indexOf(ext) >= 0) return "📊";
-    if (["ppt", "pptx"].indexOf(ext) >= 0) return "📽️";
-    if (["zip", "rar", "7z", "tar", "gz"].indexOf(ext) >= 0) return "📦";
-    if (["mp4", "mov", "avi", "mkv"].indexOf(ext) >= 0) return "🎬";
-    if (["mp3", "wav", "flac", "aac"].indexOf(ext) >= 0) return "🎵";
-    if (["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"].indexOf(ext) >= 0) return "🖼️";
-    return "📄";
+    if (ext === "pdf") return ICONS.pdf;
+    if (["doc", "docx"].indexOf(ext) >= 0) return ICONS.doc;
+    if (["xls", "xlsx", "csv"].indexOf(ext) >= 0) return ICONS.sheet;
+    if (["ppt", "pptx"].indexOf(ext) >= 0) return ICONS.slide;
+    if (["zip", "rar", "7z", "tar", "gz"].indexOf(ext) >= 0) return ICONS.archive;
+    if (["mp4", "mov", "avi", "mkv"].indexOf(ext) >= 0) return ICONS.video;
+    if (["mp3", "wav", "flac", "aac"].indexOf(ext) >= 0) return ICONS.audio;
+    if (["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"].indexOf(ext) >= 0) return ICONS.image;
+    return ICONS.file;
   }
 
   function fmtSize(n) {
@@ -255,36 +304,8 @@
     if (!res.ok) throw new Error(await apiErrorText(res));
   }
 
-  async function searchFiles(query) {
-    var url = BASE + "/api/v2.1/search?query=" + encodeURIComponent(query) +
-      "&mountId=" + encodeURIComponent(MOUNT) +
-      "&path=" + encodePath(ROOT) +
-      "&limit=" + SEARCH_LIMIT;
-    var res = await koofrFetch(url);
-    if (!res.ok) throw new Error(await apiErrorText(res));
-    var data = await res.json();
-    return (data.hits || []).filter(function (h) {
-      var p = normalizePath(h.path);
-      return h.type === "file" && p.indexOf(ROOT) === 0;
-    }).map(function (h) {
-      return {
-        name: h.name,
-        path: normalizePath(h.path),
-        modified: Number(h.modified) || 0,
-        size: Number(h.size) || 0,
-        contentType: h.contentType || ""
-      };
-    });
-  }
-
-  function normalizePath(p) {
-    var s = String(p || "");
-    if (s.charAt(0) !== "/") s = "/" + s;
-    return s;
-  }
-
-  /* listrecursive 返回 NDJSON 流，逐行解析 */
-  async function listRecursiveFiles(path) {
+  /* listrecursive 返回 NDJSON 流，逐行解析（文件 + 文件夹） */
+  async function listRecursiveAll(path) {
     var url = BASE + "/content/api/v2.1/mounts/" + encodeURIComponent(MOUNT) + "/files/listrecursive?path=" + encodePath(path);
     var res = await koofrFetch(url);
     if (!res.ok) throw new Error(await apiErrorText(res));
@@ -296,10 +317,11 @@
       if (!line) continue;
       try {
         var item = JSON.parse(line);
-        if (item.type === "file" && item.file && item.file.type === "file") {
+        if (item.type === "file" && item.file && item.file.name !== "") {
           out.push({
             name: item.file.name,
             relPath: item.path,
+            type: item.file.type === "dir" ? "dir" : "file",
             modified: Number(item.file.modified) || 0,
             size: Number(item.file.size) || 0,
             contentType: item.file.contentType || ""
@@ -309,6 +331,120 @@
       if (out.length > 5000) break;
     }
     return out;
+  }
+
+  /* 最近更新只需要文件 */
+  async function listRecursiveFiles(path) {
+    var items = await listRecursiveAll(path);
+    return items.filter(function (it) { return it.type === "file"; }).map(function (it) {
+      return {
+        name: it.name,
+        relPath: it.relPath,
+        modified: it.modified,
+        size: it.size,
+        contentType: it.contentType
+      };
+    });
+  }
+
+  /* ================= 本地搜索（文件名/文件夹名/类型 + 拼音 + 模糊） ================= */
+
+  var TYPE_GROUPS = [
+    { label: "文档", exts: ["doc", "docx", "txt", "md", "rtf", "wps", "odt", "pdf"] },
+    { label: "表格", exts: ["xls", "xlsx", "csv", "ods"] },
+    { label: "演示", exts: ["ppt", "pptx", "odp"] },
+    { label: "PDF", exts: ["pdf"] },
+    { label: "图片", exts: ["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "ico"] },
+    { label: "视频", exts: ["mp4", "mov", "avi", "mkv", "flv", "wmv", "webm"] },
+    { label: "音频", exts: ["mp3", "wav", "flac", "aac", "ogg", "m4a"] },
+    { label: "压缩包", exts: ["zip", "rar", "7z", "tar", "gz", "bz2"] },
+    { label: "代码", exts: ["js", "html", "css", "py", "java", "c", "cpp", "json", "xml", "sh"] }
+  ];
+
+  function fileTypeLabel(name) {
+    var ext = extOf(name);
+    for (var i = 0; i < TYPE_GROUPS.length; i++) {
+      if (TYPE_GROUPS[i].exts.indexOf(ext) >= 0) return TYPE_GROUPS[i].label;
+    }
+    return "其他";
+  }
+
+  /* 中文转拼音：全拼 + 首字母；库不可用时返回空，中文子串匹配仍可用 */
+  function pinyinOf(text) {
+    try {
+      var py = window.pinyinPro;
+      if (!py || typeof py.pinyin !== "function") return { pinyin: "", initials: "" };
+      var opts = { toneType: "none", type: "array", nonZh: "removed" };
+      var full = py.pinyin(String(text), opts).join("").toLowerCase().replace(/\s+/g, "");
+      var first = py.pinyin(String(text), Object.assign({ pattern: "first" }, opts)).join("").toLowerCase().replace(/\s+/g, "");
+      return { pinyin: full, initials: first };
+    } catch (e) {
+      return { pinyin: "", initials: "" };
+    }
+  }
+
+  function normalizeAbs(root, rel) {
+    if (rel === "/") return root;
+    if (rel.charAt(0) === "/") return root + rel;
+    return root + "/" + rel;
+  }
+
+  async function ensureSearchIndex() {
+    var now = Date.now();
+    if (searchIndex && now - searchIndex.ts < SEARCH_INDEX_TTL) return searchIndex;
+    var items = await listRecursiveAll(ROOT);
+    var entries = [];
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      if (it.relPath === "/") continue;
+      var py = pinyinOf(it.name);
+      entries.push({
+        name: it.name,
+        path: normalizeAbs(ROOT, it.relPath),
+        kind: it.type,
+        size: it.size || 0,
+        modified: it.modified || 0,
+        pinyin: py.pinyin,
+        initials: py.initials,
+        ext: extOf(it.name),
+        typeLabel: fileTypeLabel(it.name)
+      });
+    }
+    searchIndex = { entries: entries, ts: now };
+    return searchIndex;
+  }
+
+  /* 子串匹配 + 字符顺序模糊匹配 */
+  function fuzzyMatch(hay, q) {
+    hay = String(hay || "").toLowerCase();
+    q = String(q || "").toLowerCase();
+    if (!q) return false;
+    if (hay.indexOf(q) >= 0) return true;
+    var i = 0;
+    for (var j = 0; j < hay.length && i < q.length; j++) {
+      if (hay.charAt(j) === q.charAt(i)) i++;
+    }
+    return i === q.length;
+  }
+
+  function entryMatches(entry, q, scope) {
+    var qc = q.replace(/\s+/g, "");
+    if (scope === "file" && entry.kind !== "file") return false;
+    if (scope === "folder" && entry.kind !== "dir") return false;
+    if (scope === "type" && entry.kind !== "file") return false;
+    if (scope === "all" || scope === "file" || scope === "folder") {
+      if (fuzzyMatch(entry.name, q)) return true;
+      if (entry.pinyin && fuzzyMatch(entry.pinyin, qc)) return true;
+      if (entry.initials && fuzzyMatch(entry.initials, qc)) return true;
+      if (scope !== "all") return false;
+    }
+    if (scope === "all" || scope === "type") {
+      if (entry.kind === "file") {
+        if (fuzzyMatch(entry.ext, qc)) return true;
+        if (fuzzyMatch(entry.typeLabel, q)) return true;
+      }
+    }
+    return false;
   }
 
   /* XHR 上传（为了拿到进度） */
@@ -376,7 +512,8 @@
       expanded: {},
       mode: "download",
       selected: {},
-      batchArmed: false
+      batchArmed: false,
+      folderArmed: false
     };
   }
 
@@ -511,15 +648,24 @@
     updateBatchBar();
   }
 
-  function switchMode(mode) {
+  function switchMode(mode, keepPosition) {
     if (state.mode === mode) return;
     state.mode = mode;
     applyModeLayout(mode);
     if (mode === "upload") {
       fillFolderSelect(state.selectedPath || ROOT);
-      renderTree();
+      if (keepPosition && state.selectedPath) {
+        syncTreeToSelection(state.selectedPath);
+      } else {
+        renderTree();
+      }
     } else {
-      selectRoot();
+      /* 两种模式共享当前选中位置：上传模式里打开的文件夹切回下载也应保持 */
+      if (keepPosition && state.selectedPath && state.selectedPath !== ROOT) {
+        selectFolder(state.selectedPath);
+      } else {
+        selectRoot();
+      }
     }
   }
 
@@ -535,7 +681,7 @@
 
   function treeIcon(name) {
     var c = categoryMeta(name);
-    return c && c.icon ? c.icon : "📁";
+    return c && EMOJI_ICON_MAP[c.icon] ? EMOJI_ICON_MAP[c.icon] : ICONS.folder;
   }
 
   async function ensureTreeChildren(path) {
@@ -547,6 +693,8 @@
 
   /* 展开路径上所有祖先节点，让指定文件夹在树中可见并高亮 */
   async function revealPath(path) {
+    await ensureTreeChildren(ROOT);
+    state.expanded[ROOT] = "open";
     var rel = path.slice(ROOT.length).split("/").filter(Boolean);
     var acc = ROOT;
     for (var i = 0; i < rel.length; i++) {
@@ -556,20 +704,29 @@
     }
   }
 
+  /* 打开文件夹时，自动在左侧目录树展开该文件夹及其所有父级 */
+  function syncTreeToSelection(path) {
+    revealPath(path).then(function () {
+      renderTree();
+    }).catch(function (err) {
+      if (!err.auth) renderTree();
+    });
+  }
+
   function buildNodeHtml(path, depth, isRoot) {
     var name = fileName(path);
     var isOpen = state.expanded[path] === "open";
     var isLoading = state.expanded[path] === "loading";
     var children = state.treeCache[path];
     var hasChildren = isOpen && Array.isArray(children) && children.length > 0;
-    var icon = isRoot ? "📚" : treeIcon(name);
+    var icon = isRoot ? ICONS.logo : treeIcon(name);
     var indent = depth * 14;
     var active = isRoot ? (state.selectedPath === null || state.selectedPath === path) : (state.selectedPath === path);
     var html = '<div class="tree-node" style="padding-left:' + indent + 'px">';
     if (isLoading) {
-      html += '<span class="tree-toggle">…</span><span class="tree-label muted">加载中…</span>';
+      html += '<span class="tree-toggle"><span class="tree-spinner"></span></span><span class="tree-label muted">加载中…</span>';
     } else {
-      html += '<button class="tree-toggle" data-toggle="' + esc(path) + '">' + (isOpen ? "▾" : "▸") + '</button>';
+      html += '<button class="tree-toggle" data-toggle="' + esc(path) + '">' + (isOpen ? ICONS.chevronDown : ICONS.chevronRight) + '</button>';
       html += '<button class="tree-label' + (active ? " active" : "") + '" data-select="' + esc(path) +
         '" data-root="' + (isRoot ? 1 : 0) + '">' +
         '<span class="tree-icon">' + icon + '</span>' +
@@ -641,6 +798,7 @@
     closeSearchPanel();
     closeDrawer();
     fillFolderSelect(path);
+    syncTreeToSelection(path);
     if (state.mode === "upload") return;
     content.innerHTML = '<div class="loading">加载中…</div>';
     try {
@@ -670,12 +828,12 @@
 
   function renderBreadcrumb() {
     if (state.selectedPath === null) {
-      breadcrumb.innerHTML = '<span class="crumb current">🏠 主页</span>';
+      breadcrumb.innerHTML = '<span class="crumb current">' + ICONS.home + '<span>主页</span></span>';
       return;
     }
     var rel = state.selectedPath.slice(ROOT.length).split("/").filter(Boolean);
     var acc = ROOT;
-    var html = '<button class="crumb-link" data-root="1">🏠 主页</button>' +
+    var html = '<button class="crumb-link" data-root="1">' + ICONS.home + '<span>主页</span></button>' +
       '<span class="crumb-sep">/</span>' +
       '<span class="crumb current">' + esc(fileName(ROOT)) + '</span>';
     rel.forEach(function (seg, i) {
@@ -758,9 +916,9 @@
             '<span class="chip">' + esc(chip) + '</span>' +
             '<div class="update-info">' +
             '<div class="update-title">' + esc(u.name) + '</div>' +
-            '<div class="update-meta">📄 文件 · ' + fmtSize(u.size) + ' · ' + fmtTime(u.modified) + '</div>' +
+            '<div class="update-meta">' + ICONS.file + '<span>文件 · ' + fmtSize(u.size) + ' · ' + fmtTime(u.modified) + '</span></div>' +
             '</div>' +
-            '<span class="go">→</span></button>';
+            '<span class="go">' + ICONS.chevronRight + '</span></button>';
         }).join("")
       : '<div class="empty">暂无资料更新</div>';
     content.innerHTML =
@@ -797,7 +955,7 @@
 
     var folderChips = dirs.map(function (d, i) {
       return '<div class="folder-chip" data-open="' + esc(d.path) + '" title="进入「' + esc(d.name) + '」">' +
-        '<span>📁</span>' +
+        '<span class="chip-ico">' + ICONS.folder + '</span>' +
         '<span class="folder-name">' + esc(d.name) + '</span>' +
         '<span class="count">' + (chips[i] === null ? "?" : chips[i]) + '</span></div>';
     }).join("");
@@ -815,11 +973,11 @@
         '</label>' +
         '<div class="res-info">' +
         '<div class="res-title">' + esc(f.name) + '</div>' +
-        '<div class="res-meta">📄 ' + esc(ext) + ' · 文件 · ' + fmtSize(f.size) + ' · ' + fmtTime(f.modified) + '</div>' +
+        '<div class="res-meta">' + ICONS.file + '<span>' + esc(ext) + ' · 文件 · ' + fmtSize(f.size) + ' · ' + fmtTime(f.modified) + '</span></div>' +
         '</div>' +
         '<div class="res-actions">' +
-        (previewable ? '<button class="btn edit" data-preview="' + esc(full) + '">预览</button>' : "") +
-        '<button class="btn download" data-confirm-download="' + esc(full) + '">⭳ 下载</button>' +
+        (previewable ? '<button class="btn edit" data-preview="' + esc(full) + '">' + ICONS.preview + '<span>预览</span></button>' : "") +
+        '<button class="btn download" data-confirm-download="' + esc(full) + '">' + ICONS.download + '<span>下载</span></button>' +
         '</div></div>';
     }).join("");
 
@@ -831,12 +989,36 @@
       '</div>' +
       '<div class="folder-bar">' +
       '<div class="folder-chip active">全部 <span class="count">' + fileItems.length + '</span></div>' +
+      '<button class="folder-chip folder-dl" data-download-folder="1">' + ICONS.download + '<span>下载整个文件夹</span></button>' +
       folderChips +
       '</div>' +
       '<div class="res-list">' + (cards || '<div class="empty">暂无资料<br>切到「上传」模式添加文件</div>') + '</div>';
 
     var homeBtn = content.querySelector("[data-home]");
     if (homeBtn) homeBtn.addEventListener("click", selectRoot);
+    var dfBtn = content.querySelector("[data-download-folder]");
+    if (dfBtn) {
+      dfBtn.addEventListener("click", function () {
+        if (!state.folderArmed) {
+          state.folderArmed = true;
+          dfBtn.innerHTML = "✔ 再次点击确认下载";
+          clearTimeout(folderConfirmTimer);
+          folderConfirmTimer = setTimeout(function () {
+            resetFolderDlBtn(dfBtn);
+          }, 3000);
+          return;
+        }
+        clearTimeout(folderConfirmTimer);
+        resetFolderDlBtn(dfBtn);
+        showBanner("正在打包下载…", false);
+        downloadFolderZip(state.selectedPath).then(function () {
+          showBanner("已开始下载整个文件夹", false);
+        }).catch(function (err) {
+          if (err.auth) return;
+          showBanner(friendlyError(err), true);
+        });
+      });
+    }
     var cardEls = content.querySelectorAll(".res-card[data-card-previewable]");
     Array.prototype.forEach.call(cardEls, function (card) {
       card.addEventListener("click", function (e) {
@@ -890,6 +1072,8 @@
   function clearSelection() {
     state.selected = {};
     state.batchArmed = false;
+    state.folderArmed = false;
+    clearTimeout(folderConfirmTimer);
     if (confirmPath) {
       clearTimeout(confirmTimer);
       confirmTimer = null;
@@ -909,6 +1093,9 @@
   function updateCardSelection() {
     Array.prototype.forEach.call(content.querySelectorAll(".res-card[data-path]"), function (card) {
       card.classList.toggle("selected", !!state.selected[card.getAttribute("data-path")]);
+    });
+    Array.prototype.forEach.call(content.querySelectorAll(".res-select"), function (cb) {
+      cb.checked = !!state.selected[cb.getAttribute("data-select-path")];
     });
   }
 
@@ -947,7 +1134,7 @@
       var armed = confirmPath === path;
       card.classList.toggle("armed", armed);
       var btn = card.querySelector(".btn.download");
-      if (btn) btn.textContent = armed ? "✔ 再次点击下载" : "⭳ 下载";
+      if (btn) btn.innerHTML = (armed ? ICONS.check : ICONS.download) + '<span>' + (armed ? "再次点击下载" : "下载") + '</span>';
     });
   }
 
@@ -969,6 +1156,19 @@
     a.click();
     a.remove();
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 60000);
+  }
+
+  /* 下载整个文件夹：不传文件列表时，Koofr 返回整包 ZIP */
+  function downloadFolderZip(folderPath) {
+    return batchDownloadZip(folderPath, []);
+  }
+
+  /* 复位"下载整个文件夹"按钮的确认态与文案 */
+  function resetFolderDlBtn(btn) {
+    state.folderArmed = false;
+    if (btn && btn.isConnected) {
+      btn.innerHTML = ICONS.download + '<span>下载整个文件夹</span>';
+    }
   }
 
   async function onBatchDownload() {
@@ -1259,7 +1459,7 @@
       var q = searchInput.value.trim();
       clearTimeout(searchTimer);
       if (!q) { closeSearchPanel(); return; }
-      searchTimer = setTimeout(function () { runSearch(q); }, 400);
+      searchTimer = setTimeout(function () { runSearch(q); }, 350);
     });
     searchInput.addEventListener("keydown", function (e) {
       if (e.key === "Enter") {
@@ -1268,27 +1468,55 @@
         runSearch(searchInput.value.trim());
       }
     });
+    searchScope.addEventListener("change", function () {
+      updateSearchPlaceholder();
+      var q = searchInput.value.trim();
+      if (q) runSearch(q);
+      else searchInput.focus();
+    });
     document.addEventListener("click", function (e) {
       if (!searchWrap.contains(e.target)) closeSearchPanel();
     });
+    updateSearchPlaceholder();
+  }
+
+  function updateSearchPlaceholder() {
+    var map = {
+      all: "搜索文件名 / 文件夹名 / 类型",
+      file: "搜索文件名，支持拼音",
+      folder: "搜索文件夹名，支持拼音",
+      type: "搜索文件类型，如 pdf / 文档"
+    };
+    searchInput.placeholder = map[searchScope.value] || CONFIG.searchPlaceholder || "搜索…";
   }
 
   async function runSearch(q) {
     if (!q) { closeSearchPanel(); return; }
+    var scope = searchScope.value || "all";
     searchPanel.innerHTML = '<div class="search-item muted">搜索中…</div>';
     searchPanel.hidden = false;
     try {
-      var hits = await searchFiles(q);
+      var idx = await ensureSearchIndex();
       if (searchInput.value.trim() !== q) return;
+      var ql = q.toLowerCase().trim();
+      var hits = [];
+      for (var i = 0; i < idx.entries.length && hits.length < SEARCH_LIMIT; i++) {
+        if (entryMatches(idx.entries[i], ql, scope)) hits.push(idx.entries[i]);
+      }
       if (!hits.length) {
-        searchPanel.innerHTML = '<div class="search-item muted">没有找到匹配的文件</div>';
+        searchPanel.innerHTML = '<div class="search-item muted">没有找到匹配的结果</div>';
         return;
       }
       searchPanel.innerHTML = hits.map(function (h) {
-        return '<button class="search-item" data-open="' + esc(dirOf(h.path)) + '">' +
-          '<span class="search-name">' + esc(h.name) + '</span>' +
-          '<span class="search-path">' + esc(relPath(dirOf(h.path))) + '</span>' +
-          '<span class="search-time">' + fmtTime(h.modified) + '</span></button>';
+        var dir = h.kind === "dir" ? h.path : dirOf(h.path);
+        var icon = h.kind === "dir" ? ICONS.folder : ICONS.file;
+        var meta = h.kind === "dir"
+          ? "文件夹"
+          : esc(h.typeLabel) + " · " + fmtSize(h.size);
+        return '<button class="search-item" data-open="' + esc(dir) + '">' +
+          '<span class="search-name">' + icon + esc(h.name) + '</span>' +
+          '<span class="search-path">' + esc(relPath(dir)) + '</span>' +
+          '<span class="search-time">' + meta + '</span></button>';
       }).join("");
       searchPanel.hidden = false;
       Array.prototype.forEach.call(searchPanel.querySelectorAll("[data-open]"), function (b) {
@@ -1575,7 +1803,8 @@
     /* 每次进入页面都要求重新登录：清掉旧版本可能残留的会话凭据 */
     try { sessionStorage.removeItem(AUTH_KEY); } catch (e) { /* 忽略 */ }
     clearAuth();
-    $("brandTitle").textContent = CONFIG.siteTitle || "社团资源库";
+    var brandTextEl = $("brandText");
+    if (brandTextEl) brandTextEl.textContent = CONFIG.siteTitle || "社团资源库";
     document.title = CONFIG.siteTitle || "社团资源库";
     searchInput.placeholder = CONFIG.searchPlaceholder || "搜索文件名…";
     $("loginForm").addEventListener("submit", doLogin);
@@ -1594,8 +1823,8 @@
     });
     sidebarMask.addEventListener("click", closeDrawer);
     window.addEventListener("resize", updateTreeToggle);
-    $("modeUpload").addEventListener("click", function () { switchMode("upload"); });
-    $("modeDownload").addEventListener("click", function () { switchMode("download"); });
+    $("modeUpload").addEventListener("click", function () { switchMode("upload", true); });
+    $("modeDownload").addEventListener("click", function () { switchMode("download", true); });
     batchDownloadBtn.addEventListener("click", onBatchDownload);
     batchClearBtn.addEventListener("click", onBatchClear);
     guideBtn.addEventListener("click", startGuideTour);
