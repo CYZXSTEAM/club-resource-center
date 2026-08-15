@@ -1385,19 +1385,35 @@
     var files = Array.prototype.slice.call(fileList);
     if (!files.length) return;
     var targetPath = folderSelect.value || ROOT;
-    var uploadNames = {};
-    try {
-      var existing = await listFolder(targetPath);
-      existing.forEach(function (f) { if (f.type === "file") uploadNames[f.name] = true; });
-    } catch (e) { /* 目标文件夹读取失败则跳过重名检查 */ }
+    var items = files.map(function (f) { return { file: f, path: targetPath }; });
+    await uploadFileList(items, targetPath);
+  }
+
+  /* 通用上传队列：items = [{ file, path }]，支持多目标文件夹 */
+  async function uploadFileList(items, defaultPath) {
+    if (!items.length) return;
+    var paths = {};
+    items.forEach(function (it) { paths[it.path] = true; });
+
+    /* 各目标文件夹的现有文件名，用于重名检查 */
+    var existingByPath = {};
+    await Promise.all(Object.keys(paths).map(function (p) {
+      return listFolder(p).then(function (files) {
+        var names = {};
+        files.forEach(function (f) { if (f.type === "file") names[f.name] = true; });
+        existingByPath[p] = names;
+      }).catch(function () { existingByPath[p] = {}; });
+    }));
 
     uploadQueue.hidden = false;
-    var uids = files.map(function (f) { return addQueueRow(f.name); });
+    var uids = items.map(function (it) { return addQueueRow(it.file.name); });
     var failed = 0;
 
-    for (var i = 0; i < files.length; i++) {
-      var f = files[i];
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      var f = it.file;
       var uid = uids[i];
+      var uploadNames = existingByPath[it.path] || {};
       try {
         var isDup = !!uploadNames[f.name];
         var overwrite = false;
@@ -1434,7 +1450,7 @@
           uploadNames[f.name] = true;
         }
         setQueue(uid, "上传中", 0);
-        await uploadFile(targetPath, target, overwrite, uid);
+        await uploadFile(it.path, target, overwrite, uid);
       } catch (err) {
         if (err.auth) return;
         failed++;
@@ -1442,16 +1458,108 @@
       }
     }
 
-    var okCount = files.length - failed;
-    invalidatePath(targetPath);
+    var okCount = items.length - failed;
+    Object.keys(paths).forEach(function (p) { invalidatePath(p); });
     showBanner("上传完成：成功 " + okCount + " 个" + (failed ? "，失败 " + failed + " 个" : ""), failed > 0);
     if (state.mode === "download") {
-      if (state.selectedPath === targetPath) {
-        await selectFolder(targetPath);
-      } else if (targetPath === ROOT && state.selectedPath === null) {
+      if (state.selectedPath && paths[state.selectedPath]) {
+        await selectFolder(state.selectedPath);
+      } else if (paths[ROOT] && state.selectedPath === null) {
         loadHome();
       }
     }
+  }
+
+  /* 递归读取拖入的文件夹（webkitGetAsEntry），返回 [{ file, relPath }] */
+  function collectDroppedFiles(dataItems, callback) {
+    var results = [];
+    var pending = 0;
+    var finished = false;
+    function maybeDone() {
+      if (finished) return;
+      if (pending === 0) { finished = true; callback(results); }
+    }
+    function walkEntry(entry, basePath) {
+      if (!entry) { maybeDone(); return; }
+      if (entry.isFile) {
+        pending++;
+        entry.file(function (file) {
+          results.push({ file: file, relPath: basePath ? basePath + "/" + file.name : file.name });
+          pending--;
+          maybeDone();
+        }, function () { pending--; maybeDone(); });
+      } else if (entry.isDirectory) {
+        pending++;
+        var reader = entry.createReader();
+        (function readNext() {
+          reader.readEntries(function (entries) {
+            if (!entries || !entries.length) { pending--; maybeDone(); return; }
+            entries.forEach(function (sub) {
+              walkEntry(sub, basePath ? basePath + "/" + entry.name : entry.name);
+            });
+            readNext();
+          }, function () { pending--; maybeDone(); });
+        })();
+      } else {
+        maybeDone();
+      }
+    }
+    for (var i = 0; i < dataItems.length; i++) {
+      var it = dataItems[i];
+      var entry = it.webkitGetAsEntry ? it.webkitGetAsEntry() : null;
+      if (entry) walkEntry(entry, "");
+      else maybeDone();
+    }
+    maybeDone();
+  }
+
+  /* 拖入文件夹：按相对路径创建缺失的子文件夹，再逐个上传 */
+  async function handleDroppedFolders(dataItems) {
+    showBanner("正在处理文件夹…", false);
+    collectDroppedFiles(dataItems, function (results) {
+      handleDroppedFileList(results);
+    });
+  }
+
+  async function handleDroppedFileList(results) {
+    if (!results.length) {
+      showBanner("未读取到可上传的文件：请点击「选择文件夹」上传，或把文件夹压缩后再拖入", true);
+      return;
+    }
+    var targetPath = folderSelect.value || ROOT;
+    var items = [];
+    var dirSet = {};
+    results.forEach(function (r) {
+      var parts = r.relPath.split("/");
+      parts.pop();
+      var dirPath = targetPath;
+      parts.forEach(function (seg) {
+        dirPath = joinPath(dirPath, seg);
+        dirSet[dirPath] = true;
+      });
+      items.push({ file: r.file, path: dirPath });
+    });
+
+    var dirs = Object.keys(dirSet).sort(function (a, b) {
+      return a.split("/").length - b.split("/").length;
+    });
+    var treeDirty = false;
+    for (var i = 0; i < dirs.length; i++) {
+      var d = dirs[i];
+      if (d === targetPath) continue;
+      try {
+        await listFolder(d);
+      } catch (e) {
+        try {
+          await createFolder(dirOf(d), fileName(d));
+          delete state.treeCache[dirOf(d)];
+          invalidatePath(dirOf(d));
+          treeDirty = true;
+        } catch (e2) { /* 已存在或创建失败则继续尝试上传 */ }
+      }
+    }
+    if (treeDirty) renderTree();
+    await uploadFileList(items, targetPath);
   }
 
   async function onNewFolder() {
@@ -1506,6 +1614,19 @@
       });
     });
     uploadZone.addEventListener("drop", function (e) {
+      if (!e.dataTransfer) return;
+      var items = e.dataTransfer.items;
+      var hasDir = false;
+      if (items && items.length) {
+        for (var i = 0; i < items.length; i++) {
+          var entry = items[i].webkitGetAsEntry ? items[i].webkitGetAsEntry() : null;
+          if (entry && entry.isDirectory) { hasDir = true; break; }
+        }
+      }
+      if (hasDir) {
+        handleDroppedFolders(items);
+        return;
+      }
       if (e.dataTransfer && e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
     });
     uploadZone.addEventListener("click", function () { fileInput.click(); });
@@ -1536,6 +1657,61 @@
   }
 
   /* ================= 搜索 ================= */
+
+  /* 搜索范围自定义下拉（纯视觉层；原生 select 仅作值载体，change 逻辑不变） */
+  function initScopePicker() {
+    var picker = $("scopePicker");
+    var trigger = $("scopeTrigger");
+    var menu = $("scopeMenu");
+    var native = $("searchScope");
+    var label = $("scopeLabel");
+    if (!picker || !trigger || !menu || !native || !label) return;
+
+    function close() {
+      menu.hidden = true;
+      trigger.setAttribute("aria-expanded", "false");
+    }
+
+    function sync() {
+      var opt = native.options[native.selectedIndex];
+      label.textContent = opt ? opt.textContent : "全部";
+      var opts = menu.querySelectorAll("[data-scope]");
+      Array.prototype.forEach.call(opts, function (o) {
+        var on = o.getAttribute("data-scope") === native.value;
+        o.classList.toggle("active", on);
+        o.setAttribute("aria-selected", on ? "true" : "false");
+      });
+    }
+
+    trigger.addEventListener("click", function () {
+      if (menu.hidden) {
+        sync();
+        menu.hidden = false;
+        trigger.setAttribute("aria-expanded", "true");
+      } else {
+        close();
+      }
+    });
+
+    Array.prototype.forEach.call(menu.querySelectorAll("[data-scope]"), function (o) {
+      o.addEventListener("click", function () {
+        native.value = o.getAttribute("data-scope");
+        native.dispatchEvent(new Event("change", { bubbles: true }));
+        sync();
+        close();
+      });
+    });
+
+    trigger.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") close();
+    });
+
+    document.addEventListener("click", function (e) {
+      if (!picker.contains(e.target)) close();
+    });
+
+    sync();
+  }
 
   function initSearch() {
     searchInput.addEventListener("input", function () {
@@ -1675,7 +1851,12 @@
       targets: [".sidebar", "#folderSelect"], view: "upload"
     },
     {
-      id: 10, title: "上传文件",
+      id: 10, title: "新建文件夹",
+      text: "或者点击「新建文件夹」先创建目录。",
+      targets: ["#newFolderBtn"], view: "upload"
+    },
+    {
+      id: 11, title: "上传文件",
       text: "把文件拖入上传窗口，或点击选择文件，即可上传。",
       targets: ["#uploadZone"], view: "upload"
     }
@@ -1913,6 +2094,7 @@
     guideBtn.addEventListener("click", startGuideTour);
     initUpload();
     initSearch();
+    initScopePicker();
     showLogin();
   }
 

@@ -172,18 +172,95 @@ input, textarea { caret-color: var(--accent); }
   gap: 6px;
 }
 
-.search-wrap .search-scope {
+.scope-picker {
+  position: relative;
   flex-shrink: 0;
-  max-width: 96px;
-  padding: 8px 8px;
+  display: flex;
+  align-items: stretch;
+}
+
+.scope-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 10px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--surface-1);
-  color: var(--ink);
+  color: var(--muted);
   font-size: 12.5px;
-  outline: none;
   cursor: pointer;
+  white-space: nowrap;
+  transition: background-color .15s, border-color .15s, color .15s;
 }
+
+.scope-trigger:hover { background: var(--surface-2); color: var(--ink); }
+
+.scope-trigger .scope-caret {
+  width: 12px;
+  height: 12px;
+  color: var(--muted);
+  transition: transform .15s;
+}
+
+.scope-trigger[aria-expanded="true"] {
+  background: var(--surface-2);
+  border-color: var(--accent-border);
+  color: var(--ink);
+}
+
+.scope-trigger[aria-expanded="true"] .scope-caret { transform: rotate(180deg); }
+
+.scope-native {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.scope-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 150px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+  padding: 4px;
+  z-index: 45;
+}
+
+.scope-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  border: none;
+  background: none;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+  transition: background-color .12s, color .12s;
+}
+
+.scope-option:hover { background: var(--surface-2); }
+
+.scope-option.active { color: var(--accent-text); font-weight: 600; }
+
+.scope-check {
+  width: 13px;
+  height: 13px;
+  color: var(--accent-text);
+  visibility: hidden;
+}
+
+.scope-option.active .scope-check { visibility: visible; }
 
 .search-wrap input {
   flex: 1;

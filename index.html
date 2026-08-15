@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>社团资源库</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='24' fill='%235E6AD2'/><rect x='17' y='20' width='66' height='16' rx='5' fill='%23FFFFFF'/><rect x='17' y='42' width='66' height='16' rx='5' fill='%23FFFFFF' opacity='.85'/><rect x='17' y='64' width='66' height='16' rx='5' fill='%23FFFFFF' opacity='.7'/></svg>">
-  <link rel="stylesheet" href="style.css?v=19">
+  <link rel="stylesheet" href="style.css?v=20">
 </head>
 <body>
   <header class="topbar">
@@ -14,12 +14,24 @@
       <span id="brandText">社团资源库</span>
     </button>
     <div class="search-wrap" id="searchWrap">
-      <select id="searchScope" class="search-scope" title="搜索范围">
-        <option value="all">全部</option>
-        <option value="file">文件名</option>
-        <option value="folder">文件夹名</option>
-        <option value="type">文件类型</option>
-      </select>
+      <div class="scope-picker" id="scopePicker">
+        <button class="scope-trigger" id="scopeTrigger" type="button" aria-haspopup="listbox" aria-expanded="false" title="搜索范围">
+          <span id="scopeLabel">全部</span>
+          <svg class="ico scope-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5.5 9L12 15.5 18.5 9"></path></svg>
+        </button>
+        <div class="scope-menu hidden" id="scopeMenu" role="listbox" aria-label="搜索范围">
+          <button class="scope-option active" type="button" data-scope="all" role="option" aria-selected="true"><span>全部</span><svg class="ico scope-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></button>
+          <button class="scope-option" type="button" data-scope="file" role="option" aria-selected="false"><span>文件名</span><svg class="ico scope-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></button>
+          <button class="scope-option" type="button" data-scope="folder" role="option" aria-selected="false"><span>文件夹名</span><svg class="ico scope-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></button>
+          <button class="scope-option" type="button" data-scope="type" role="option" aria-selected="false"><span>文件类型</span><svg class="ico scope-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></button>
+        </div>
+        <select id="searchScope" class="scope-native" aria-hidden="true" tabindex="-1" title="搜索范围">
+          <option value="all">全部</option>
+          <option value="file">文件名</option>
+          <option value="folder">文件夹名</option>
+          <option value="type">文件类型</option>
+        </select>
+      </div>
       <input type="search" id="globalSearch" placeholder="搜索文件名…" autocomplete="off">
       <div class="search-panel hidden" id="searchPanel"></div>
     </div>
