@@ -65,7 +65,7 @@ html, body { margin: 0; padding: 0; }
 
 body {
   min-height: 100vh;
-  background: #0d0d0f;
+  background-color: #0d0d0f;
   background-image: radial-gradient(1100px 520px at 75% -8%, rgba(94, 106, 210, .10), transparent 62%);
   background-attachment: fixed;
   color: var(--ink);
@@ -74,6 +74,21 @@ body {
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+/* 背景图（始终可见层）：单个大号 CYZX，左下→右上倾斜。
+   pointer-events:none 保证不拦截任何点击；z-index 低于顶栏/弹窗/批量栏/教学引导等交互层。 */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  user-select: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1600' height='1000' viewBox='0%200%201600%201000'%3E%3Cg transform='rotate(-25%20800%20500)'%3E%3Ctext x='800' y='500' text-anchor='middle' dominant-baseline='middle' font-family='Inter,%20-apple-system,%20sans-serif' font-size='340' font-weight='500' letter-spacing='24' fill='%23FFFFFF' fill-opacity='0.05'%3ECYZX%3C/text%3E%3C/g%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: min(1100px, 92vw) auto;
 }
 
 button, input, select, textarea { font-family: inherit; }
@@ -908,6 +923,27 @@ input, textarea { caret-color: var(--accent); }
   font-weight: 700;
 }
 
+.subject-right .count.folder-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.subject-right .count.folder-count .ico {
+  width: 11px;
+  height: 11px;
+  color: var(--muted);
+}
+
+.subject-card:hover .subject-right .count.folder-count {
+  background: var(--surface-3);
+  border-color: var(--border-strong);
+}
+
 .update-list {
   display: flex;
   flex-direction: column;
@@ -1167,6 +1203,23 @@ input, textarea { caret-color: var(--accent); }
   pointer-events: none;
 }
 
+/* 需要真实点击的步骤：目标区域更醒目（橙色描边 + 填充 + 呼吸光晕） */
+.guide-highlight.clickable {
+  border: 2px solid #ff5722;
+  background: rgba(255, 87, 34, .08);
+  box-shadow: 0 0 0 3px rgba(255, 87, 34, .45), 0 0 30px rgba(255, 87, 34, .55);
+  animation: guideTargetPulse 1.2s ease infinite;
+}
+
+@keyframes guideTargetPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 3px rgba(255, 87, 34, .45), 0 0 30px rgba(255, 87, 34, .55);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(255, 87, 34, .30), 0 0 46px rgba(255, 87, 34, .75);
+  }
+}
+
 .guide-catcher {
   position: fixed;
   inset: 0;
@@ -1203,6 +1256,20 @@ input, textarea { caret-color: var(--accent); }
   color: var(--muted);
   margin: 0 0 14px;
   line-height: 1.6;
+}
+
+.guide-tooltip .guide-click-hint {
+  color: #ff5722;
+  font-weight: 800;
+  font-size: 15px;
+  padding: 0 2px;
+  border-bottom: 2px solid #ff9800;
+  animation: guideHintPulse 1s ease infinite;
+}
+
+@keyframes guideHintPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .55; }
 }
 
 .guide-actions {

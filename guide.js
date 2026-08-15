@@ -107,7 +107,7 @@
     /* 高亮框 */
     rects.forEach(function (r) {
       var h = document.createElement("div");
-      h.className = "guide-highlight";
+      h.className = "guide-highlight" + (step.waitClick ? " clickable" : "");
       h.style.left = r.left + "px";
       h.style.top = r.top + "px";
       h.style.width = r.width + "px";
@@ -147,15 +147,26 @@
     var isFirst = current === 0;
     var isWait = !!step.waitClick;
     var isLast = current === steps.length - 1;
+    var actionsHtml;
+    if (isLast) {
+      /* 最后一步仅保留"完成"，不再显示上一步/退出 */
+      actionsHtml = '<button class="btn primary" data-g="next">完成</button>';
+    } else {
+      actionsHtml =
+        '<button class="btn skip" data-g="prev"' + (isFirst ? " disabled" : "") + '>上一步</button>' +
+        (isWait ? "" : '<button class="btn primary" data-g="next">下一步</button>') +
+        '<button class="btn ghost" data-g="end">退出</button>';
+    }
+    var textHtml = esc(step.text || "");
+    if (isWait) {
+      /* 需要真实点击的步骤：突出强调"请点击" */
+      textHtml = textHtml.replace(/请点击/g, '<span class="guide-click-hint">请点击</span>');
+    }
     tip.innerHTML =
       '<div class="guide-progress">第 ' + (current + 1) + ' / ' + steps.length + ' 步</div>' +
       (step.title ? '<div class="guide-title">' + esc(step.title) + '</div>' : "") +
-      '<div class="guide-text">' + esc(step.text) + '</div>' +
-      '<div class="guide-actions">' +
-      '<button class="btn skip" data-g="prev"' + (isFirst ? " disabled" : "") + '>上一步</button>' +
-      (isWait ? "" : '<button class="btn primary" data-g="next">' + (isLast ? "完成" : "下一步") + '</button>') +
-      '<button class="btn ghost" data-g="end">退出</button>' +
-      '</div>';
+      '<div class="guide-text">' + textHtml + '</div>' +
+      '<div class="guide-actions">' + actionsHtml + '</div>';
     root.appendChild(tip);
     document.body.appendChild(root);
 

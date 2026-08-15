@@ -8,9 +8,9 @@
   var ROOT = CONFIG.rootPath || "/社团资源库";
   var AUTH_KEY = "club_koofr_auth";
   var PREVIEW_EXT = { pdf: 1, jpg: 1, jpeg: 1, png: 1, gif: 1, webp: 1, bmp: 1, svg: 1 };
-  var RECENT_LIMIT = 20;
+  var RECENT_LIMIT = 5;    /* 主页"最新资料更新"展示条数 */
   var SEARCH_LIMIT = 50;
-  var CACHE_TTL = 30000;   /* 列表/主页缓存时长：30 秒 */
+  var CACHE_TTL = 60000;   /* 列表/主页缓存时长：60 秒 */
   var SEARCH_INDEX_TTL = 60000; /* 搜索索引缓存时长：60 秒 */
 
   var dataCache = {
@@ -42,7 +42,7 @@
   var bannerTimer = null;
   var searchTimer = null;
   var previewObjectUrl = null;
-  var confirmPath = null;   /* 二次确认下载的卡片路径 */
+  var confirmPath = null;   /* 二次确认下载：当前处于确认态的文件路径 */
   var confirmTimer = null;
   var batchTimer = null;
   var folderConfirmTimer = null;
@@ -517,6 +517,19 @@
     };
   }
 
+  /* 退出登录/会话失效时：清空内存缓存与确认定时器，做到无残留 */
+  function clearAllCaches() {
+    dataCache = { lists: {}, home: null };
+    searchIndex = null;
+    if (confirmPath) {
+      clearTimeout(confirmTimer);
+      confirmTimer = null;
+      confirmPath = null;
+    }
+    clearTimeout(folderConfirmTimer);
+    clearTimeout(batchTimer);
+  }
+
   function closeDrawer() {
     sidebar.classList.remove("open");
     sidebarMask.hidden = true;
@@ -529,6 +542,7 @@
 
   function showLogin(message) {
     resetState();
+    clearAllCaches();
     loginView.hidden = false;
     mainView.hidden = true;
     logoutBtn.hidden = true;
@@ -632,7 +646,11 @@
     state.mode = "download";
     applyModeLayout("download");
     renderTree();
-    selectRoot();
+    content.innerHTML = '<div class="loading">正在加载…</div>';
+    /* 登录后后台预加载整库缓存，进入子文件夹秒开 */
+    preloadCache().then(function () {
+      if (getAuth()) selectRoot();
+    });
     maybeAutoGuide();
   }
 
@@ -855,6 +873,63 @@
 
   /* ================= 右侧内容 ================= */
 
+  /* 登录后后台预加载：一次递归读取整库，填充文件列表/目录树/主页缓存（60 秒） */
+  async function preloadCache() {
+    try {
+      var items = await listRecursiveAll(ROOT);
+      var ts = Date.now();
+      var filesByDir = {};
+      var dirsByDir = {};
+      var homeFiles = [];
+      items.forEach(function (it) {
+        if (it.relPath === "/") return;
+        var abs = normalizeAbs(ROOT, it.relPath);
+        var parent = dirOf(abs);
+        if (it.type === "dir") {
+          (dirsByDir[parent] = dirsByDir[parent] || []).push({ name: it.name, path: abs });
+        } else {
+          (filesByDir[parent] = filesByDir[parent] || []).push({
+            name: it.name,
+            type: "file",
+            size: it.size,
+            modified: it.modified,
+            contentType: it.contentType
+          });
+          homeFiles.push({
+            name: it.name,
+            relPath: it.relPath,
+            modified: it.modified,
+            size: it.size,
+            contentType: it.contentType
+          });
+        }
+      });
+      Object.keys(filesByDir).forEach(function (p) {
+        dataCache.lists[p] = { files: filesByDir[p], ts: ts };
+      });
+      Object.keys(dirsByDir).forEach(function (p) {
+        if (state.treeCache[p] === undefined) state.treeCache[p] = dirsByDir[p];
+      });
+      var dirs = dirsByDir[ROOT] || [];
+      var cards = dirs.map(function (d) {
+        var prefix = d.path + "/";
+        var count = 0;
+        for (var i = 0; i < items.length; i++) {
+          var it = items[i];
+          if (it.type === "file" && normalizeAbs(ROOT, it.relPath).indexOf(prefix) === 0) count++;
+        }
+        return {
+          name: d.name,
+          path: d.path,
+          icon: treeIcon(d.name),
+          count: count,
+          dirCount: (dirsByDir[d.path] || []).length
+        };
+      });
+      dataCache.home = { cards: cards, items: homeFiles, ts: ts };
+    } catch (e) { /* 预加载失败则按需加载 */ }
+  }
+
   function loadHome() {
     var c = dataCache.home;
     if (c && Date.now() - c.ts < CACHE_TTL) {
@@ -862,37 +937,51 @@
       return Promise.resolve();
     }
     content.innerHTML = '<div class="loading">正在加载主页…</div>';
-    return Promise.all([
-      ensureTreeChildren(ROOT),
-      listRecursiveFiles(ROOT)
-    ]).then(function (results) {
-      var dirs = results[0];
-      var items = results[1].filter(function (it) { return it.relPath !== "/"; });
-      return loadFolderCounts(dirs).then(function (cards) {
-        dataCache.home = { cards: cards, items: items, ts: Date.now() };
-        renderHome(cards, items);
+    return listRecursiveAll(ROOT).then(function (all) {
+      var rootDirs = [];
+      var dirsByParent = {};
+      var homeFiles = [];
+      all.forEach(function (it) {
+        if (it.relPath === "/") return;
+        var abs = normalizeAbs(ROOT, it.relPath);
+        var parent = dirOf(abs);
+        if (it.type === "dir") {
+          (dirsByParent[parent] = dirsByParent[parent] || []).push({ name: it.name, path: abs });
+          if (parent === ROOT) rootDirs.push({ name: it.name, path: abs });
+        } else {
+          homeFiles.push({
+            name: it.name,
+            relPath: it.relPath,
+            modified: it.modified,
+            size: it.size,
+            contentType: it.contentType
+          });
+        }
       });
+      if (state.treeCache[ROOT] === undefined) state.treeCache[ROOT] = rootDirs;
+      var cards = rootDirs.map(function (d) {
+        var prefix = d.path + "/";
+        var count = 0;
+        for (var i = 0; i < all.length; i++) {
+          var it = all[i];
+          if (it.type === "file" && normalizeAbs(ROOT, it.relPath).indexOf(prefix) === 0) count++;
+        }
+        return {
+          name: d.name,
+          path: d.path,
+          icon: treeIcon(d.name),
+          count: count,
+          dirCount: (dirsByParent[d.path] || []).length
+        };
+      });
+      dataCache.home = { cards: cards, items: homeFiles, ts: Date.now() };
+      renderHome(cards, homeFiles);
     }).catch(function (err) {
       if (err.auth) return;
       content.innerHTML = '<div class="error-box">加载主页失败：' + esc(friendlyError(err)) +
         '<br><button class="btn" data-reload="1">重试</button></div>';
       wireReload();
     });
-  }
-
-  function loadFolderCounts(dirs) {
-    return Promise.all(dirs.map(function (d) {
-      return listFolder(d.path).then(function (files) {
-        return {
-          name: d.name,
-          path: d.path,
-          icon: treeIcon(d.name),
-          count: files.filter(function (f) { return f.type === "file"; }).length
-        };
-      }).catch(function () {
-        return { name: d.name, path: d.path, icon: treeIcon(d.name), count: null };
-      });
-    }));
   }
 
   function renderHome(cards, items) {
@@ -902,8 +991,12 @@
           return '<div class="subject-card" data-open="' + esc(c.path) + '" title="进入「' + esc(c.name) + '」">' +
             '<div class="sc-icon">' + c.icon + '</div>' +
             '<div class="sc-name">' + esc(c.name) + '</div>' +
-            '<div class="sc-meta">' + (c.count === null ? "份数未知" : c.count + " 份资料") + '</div>' +
-            '<div class="subject-right"><span class="count">' + (c.count === null ? "?" : c.count) + '</span></div>' +
+            '<div class="sc-meta">' + (c.count === null ? "份数未知" : c.count + " 份资料") +
+            ' ' + (c.dirCount === null ? "文件夹数未知" : c.dirCount + " 个文件夹") + '</div>' +
+            '<div class="subject-right">' +
+            '<span class="count">' + (c.count === null ? "?" : c.count) + '</span>' +
+            '<span class="count folder-count">' + ICONS.folder + (c.dirCount === null ? "?" : c.dirCount) + '</span>' +
+            '</div>' +
             '</div>';
         }).join("")
       : '<div class="empty">根目录下还没有文件夹，先切到「上传」模式新建一个。</div>';
@@ -947,19 +1040,6 @@
     var dirs = sorted.filter(function (f) { return f.type === "dir"; });
     var fileItems = sorted.filter(function (f) { return f.type === "file"; });
 
-    var chips = await Promise.all(dirs.map(function (d) {
-      return listFolder(d.path).then(function (fs) {
-        return fs.filter(function (f) { return f.type === "file"; }).length;
-      }).catch(function () { return null; });
-    }));
-
-    var folderChips = dirs.map(function (d, i) {
-      return '<div class="folder-chip" data-open="' + esc(d.path) + '" title="进入「' + esc(d.name) + '」">' +
-        '<span class="chip-ico">' + ICONS.folder + '</span>' +
-        '<span class="folder-name">' + esc(d.name) + '</span>' +
-        '<span class="count">' + (chips[i] === null ? "?" : chips[i]) + '</span></div>';
-    }).join("");
-
     var cards = fileItems.map(function (f) {
       var full = joinPath(state.selectedPath, f.name);
       var previewable = isPreviewable(f.name);
@@ -990,7 +1070,6 @@
       '<div class="folder-bar">' +
       '<div class="folder-chip active">全部 <span class="count">' + fileItems.length + '</span></div>' +
       '<button class="folder-chip folder-dl" data-download-folder="1">' + ICONS.download + '<span>下载整个文件夹</span></button>' +
-      folderChips +
       '</div>' +
       '<div class="res-list">' + (cards || '<div class="empty">暂无资料<br>切到「上传」模式添加文件</div>') + '</div>';
 
@@ -1022,6 +1101,8 @@
     var cardEls = content.querySelectorAll(".res-card[data-card-previewable]");
     Array.prototype.forEach.call(cardEls, function (card) {
       card.addEventListener("click", function (e) {
+        /* 按钮点击会替换 innerHTML，目标节点可能已脱离文档，此时直接忽略 */
+        if (!card.contains(e.target)) return;
         if (e.target.closest && (e.target.closest(".res-check") || e.target.closest(".res-actions"))) return;
         armConfirm(card.getAttribute("data-path"));
       });
@@ -1034,7 +1115,8 @@
     });
     var confirmEls = content.querySelectorAll("[data-confirm-download]");
     Array.prototype.forEach.call(confirmEls, function (b) {
-      b.addEventListener("click", function () {
+      b.addEventListener("click", function (e) {
+        e.stopPropagation();
         armConfirm(b.getAttribute("data-confirm-download"));
       });
     });
@@ -1051,7 +1133,8 @@
     });
     var previewBtns = content.querySelectorAll("[data-preview]");
     Array.prototype.forEach.call(previewBtns, function (b) {
-      b.addEventListener("click", function () {
+      b.addEventListener("click", function (e) {
+        e.stopPropagation();
         previewFile(b.getAttribute("data-preview")).catch(function (err) {
           if (!err.auth) showBanner(friendlyError(err), true);
         });
@@ -1540,7 +1623,7 @@
   var tourSteps = [
     {
       id: 1, title: "目录",
-      text: "左侧是目录，可点击文件夹前的箭头展开子目录。",
+      text: "左侧是目录，可点击文件夹前的箭头展开子目录，由此进入子文件夹。",
       targets: [".sidebar"], view: "home"
     },
     {
