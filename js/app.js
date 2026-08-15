@@ -1,29 +1,11 @@
 /* 社团资源库 v1.5 —— 双栏浏览模式（目录树 + 内容区），基于 Koofr REST API */
-(function () {
   "use strict";
 
-  var CONFIG = window.CLUB_CONFIG || {};
-  var BASE = CONFIG.koofrBase || "https://app.koofr.net";
-  var MOUNT = CONFIG.mountId || "primary";
-  var ROOT = CONFIG.rootPath || "/社团资源库";
   var AUTH_KEY = "club_koofr_auth";
-  var PREVIEW_EXT = { pdf: 1, jpg: 1, jpeg: 1, png: 1, gif: 1, webp: 1, bmp: 1, svg: 1 };
+  var MOBILE_MQ = "(max-width: 768px)";   /* 与 CSS 断点保持一致 */
   var RECENT_LIMIT = 5;    /* 主页"最新资料更新"展示条数 */
-  var SEARCH_LIMIT = 50;
-  var CACHE_TTL = 60000;   /* 列表/主页缓存时长：60 秒 */
-  var SEARCH_INDEX_TTL = 60000; /* 搜索索引缓存时长：60 秒 */
 
-  var dataCache = {
-    lists: {},             /* path -> { files, ts } */
-    home: null             /* { cards, items, ts } */
-  };
-  var searchIndex = null;  /* { entries, ts } 本地搜索索引 */
 
-  function invalidatePath(path) {
-    delete dataCache.lists[path];
-    dataCache.home = null;
-    searchIndex = null;
-  }
 
   var state = {
     selectedPath: null,   /* null 表示根节点（右侧显示主页） */
@@ -36,12 +18,10 @@
     folderArmed: false    /* 下载整个文件夹的二次确认状态 */
   };
 
-  var memoryAuth = null;        /* 内存中的登录凭据，刷新即清 */
   var queueRows = {};
   var queueUid = 0;
   var bannerTimer = null;
   var searchTimer = null;
-  var previewObjectUrl = null;
   var confirmPath = null;   /* 二次确认下载：当前处于确认态的文件路径 */
   var confirmTimer = null;
   var batchTimer = null;
@@ -75,6 +55,9 @@
   var batchDownloadBtn = $("batchDownloadBtn");
   var batchClearBtn = $("batchClearBtn");
   var guideBtn = $("guideBtn");
+  var topbar = document.querySelector(".topbar");
+  var searchIcon = document.querySelector(".search-icon");
+  var searchClose = document.querySelector(".search-close");
 
   /* ================= 内联 SVG 图标（Linear 风格，统一 1.6 描边） ================= */
   function svgIcon(inner, cls) {
@@ -118,27 +101,6 @@
     "\u{1F4C1}": ICONS.folder,
     "\u{1F4C2}": ICONS.folder
   };
-
-  /* ================= 登录凭据（仅存内存，刷新即清） ================= */
-
-  function authError() {
-    var e = new Error("AUTH");
-    e.auth = true;
-    return e;
-  }
-
-  function getAuth() {
-    return memoryAuth;
-  }
-
-  function saveAuth(email, password) {
-    var b64 = btoa(unescape(encodeURIComponent(email + ":" + password)));
-    memoryAuth = { email: email, b64: b64 };
-  }
-
-  function clearAuth() {
-    memoryAuth = null;
-  }
 
   /* ================= 工具函数 ================= */
 
@@ -195,7 +157,7 @@
     if (["zip", "rar", "7z", "tar", "gz"].indexOf(ext) >= 0) return ICONS.archive;
     if (["mp4", "mov", "avi", "mkv"].indexOf(ext) >= 0) return ICONS.video;
     if (["mp3", "wav", "flac", "aac"].indexOf(ext) >= 0) return ICONS.audio;
-    if (["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"].indexOf(ext) >= 0) return ICONS.image;
+    if (["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "ico", "avif", "tif", "tiff"].indexOf(ext) >= 0) return ICONS.image;
     return ICONS.file;
   }
 
@@ -229,277 +191,6 @@
       if (j && j.error && j.error.message) return j.error.message;
     } catch (e) { /* 忽略 */ }
     return "请求失败（" + res.status + "）";
-  }
-
-  /* ================= Koofr API ================= */
-
-  async function koofrFetch(url, options) {
-    var auth = getAuth();
-    if (!auth) {
-      showLogin("请先登录");
-      throw authError();
-    }
-    options = options || {};
-    var headers = Object.assign({ Authorization: "Basic " + auth.b64 }, options.headers || {});
-    var res = await fetch(url, Object.assign({}, options, { headers: headers }));
-    if (res.status === 401) {
-      clearAuth();
-      showLogin("邮箱或应用密码错误，或登录已过期，请重新登录");
-      throw authError();
-    }
-    return res;
-  }
-
-  function listUrl(path) {
-    return BASE + "/api/v2.1/mounts/" + encodeURIComponent(MOUNT) + "/files/list?path=" + encodePath(path);
-  }
-
-  function getUrl(path, force) {
-    return BASE + "/content/api/v2.1/mounts/" + encodeURIComponent(MOUNT) + "/files/get?path=" + encodePath(path) +
-      (force ? "&force=true" : "");
-  }
-
-  function putUrl(path, filename, overwrite) {
-    return BASE + "/content/api/v2.1/mounts/" + encodeURIComponent(MOUNT) + "/files/put?path=" + encodePath(path) +
-      "&filename=" + encodeURIComponent(filename) + "&overwrite=" + (overwrite ? "true" : "false");
-  }
-
-  async function listFolder(path) {
-    var c = dataCache.lists[path];
-    if (c && Date.now() - c.ts < CACHE_TTL) return c.files;
-    var res = await koofrFetch(listUrl(path));
-    if (!res.ok) {
-      var err = new Error(await apiErrorText(res));
-      err.status = res.status;
-      throw err;
-    }
-    var data = await res.json();
-    var items = (data.files || []).map(function (it) {
-      return {
-        name: it.name,
-        type: it.type === "dir" ? "dir" : "file",
-        size: Number(it.size) || 0,
-        modified: Number(it.modified) || 0,
-        contentType: it.contentType || ""
-      };
-    });
-    dataCache.lists[path] = { files: items, ts: Date.now() };
-    return items;
-  }
-
-  async function listDirs(path) {
-    var items = await listFolder(path);
-    return items.filter(function (it) { return it.type === "dir"; }).map(function (it) {
-      return { name: it.name, path: joinPath(path, it.name) };
-    });
-  }
-
-  async function createFolder(parentPath, name) {
-    var url = BASE + "/api/v2.1/mounts/" + encodeURIComponent(MOUNT) + "/files/folder?path=" + encodePath(parentPath);
-    var res = await koofrFetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: name })
-    });
-    if (!res.ok) throw new Error(await apiErrorText(res));
-  }
-
-  /* listrecursive 返回 NDJSON 流，逐行解析（文件 + 文件夹） */
-  async function listRecursiveAll(path) {
-    var url = BASE + "/content/api/v2.1/mounts/" + encodeURIComponent(MOUNT) + "/files/listrecursive?path=" + encodePath(path);
-    var res = await koofrFetch(url);
-    if (!res.ok) throw new Error(await apiErrorText(res));
-    var text = await res.text();
-    var out = [];
-    var lines = text.split("\n");
-    for (var i = 0; i < lines.length; i++) {
-      var line = lines[i].trim();
-      if (!line) continue;
-      try {
-        var item = JSON.parse(line);
-        if (item.type === "file" && item.file && item.file.name !== "") {
-          out.push({
-            name: item.file.name,
-            relPath: item.path,
-            type: item.file.type === "dir" ? "dir" : "file",
-            modified: Number(item.file.modified) || 0,
-            size: Number(item.file.size) || 0,
-            contentType: item.file.contentType || ""
-          });
-        }
-      } catch (e) { /* 忽略坏行 */ }
-      if (out.length > 5000) break;
-    }
-    return out;
-  }
-
-  /* 最近更新只需要文件 */
-  async function listRecursiveFiles(path) {
-    var items = await listRecursiveAll(path);
-    return items.filter(function (it) { return it.type === "file"; }).map(function (it) {
-      return {
-        name: it.name,
-        relPath: it.relPath,
-        modified: it.modified,
-        size: it.size,
-        contentType: it.contentType
-      };
-    });
-  }
-
-  /* ================= 本地搜索（文件名/文件夹名/类型 + 拼音 + 模糊） ================= */
-
-  var TYPE_GROUPS = [
-    { label: "文档", exts: ["doc", "docx", "txt", "md", "rtf", "wps", "odt", "pdf"] },
-    { label: "表格", exts: ["xls", "xlsx", "csv", "ods"] },
-    { label: "演示", exts: ["ppt", "pptx", "odp"] },
-    { label: "PDF", exts: ["pdf"] },
-    { label: "图片", exts: ["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "ico"] },
-    { label: "视频", exts: ["mp4", "mov", "avi", "mkv", "flv", "wmv", "webm"] },
-    { label: "音频", exts: ["mp3", "wav", "flac", "aac", "ogg", "m4a"] },
-    { label: "压缩包", exts: ["zip", "rar", "7z", "tar", "gz", "bz2"] },
-    { label: "代码", exts: ["js", "html", "css", "py", "java", "c", "cpp", "json", "xml", "sh"] }
-  ];
-
-  function fileTypeLabel(name) {
-    var ext = extOf(name);
-    for (var i = 0; i < TYPE_GROUPS.length; i++) {
-      if (TYPE_GROUPS[i].exts.indexOf(ext) >= 0) return TYPE_GROUPS[i].label;
-    }
-    return "其他";
-  }
-
-  /* 中文转拼音：全拼 + 首字母；库不可用时返回空，中文子串匹配仍可用 */
-  function pinyinOf(text) {
-    try {
-      var py = window.pinyinPro;
-      if (!py || typeof py.pinyin !== "function") return { pinyin: "", initials: "" };
-      var opts = { toneType: "none", type: "array", nonZh: "removed" };
-      var full = py.pinyin(String(text), opts).join("").toLowerCase().replace(/\s+/g, "");
-      var first = py.pinyin(String(text), Object.assign({ pattern: "first" }, opts)).join("").toLowerCase().replace(/\s+/g, "");
-      return { pinyin: full, initials: first };
-    } catch (e) {
-      return { pinyin: "", initials: "" };
-    }
-  }
-
-  function normalizeAbs(root, rel) {
-    if (rel === "/") return root;
-    if (rel.charAt(0) === "/") return root + rel;
-    return root + "/" + rel;
-  }
-
-  async function ensureSearchIndex() {
-    var now = Date.now();
-    if (searchIndex && now - searchIndex.ts < SEARCH_INDEX_TTL) return searchIndex;
-    var items = await listRecursiveAll(ROOT);
-    var entries = [];
-    for (var i = 0; i < items.length; i++) {
-      var it = items[i];
-      if (it.relPath === "/") continue;
-      var py = pinyinOf(it.name);
-      entries.push({
-        name: it.name,
-        path: normalizeAbs(ROOT, it.relPath),
-        kind: it.type,
-        size: it.size || 0,
-        modified: it.modified || 0,
-        pinyin: py.pinyin,
-        initials: py.initials,
-        ext: extOf(it.name),
-        typeLabel: fileTypeLabel(it.name)
-      });
-    }
-    searchIndex = { entries: entries, ts: now };
-    return searchIndex;
-  }
-
-  /* 子串匹配 + 字符顺序模糊匹配 */
-  function fuzzyMatch(hay, q) {
-    hay = String(hay || "").toLowerCase();
-    q = String(q || "").toLowerCase();
-    if (!q) return false;
-    if (hay.indexOf(q) >= 0) return true;
-    var i = 0;
-    for (var j = 0; j < hay.length && i < q.length; j++) {
-      if (hay.charAt(j) === q.charAt(i)) i++;
-    }
-    return i === q.length;
-  }
-
-  function entryMatches(entry, q, scope) {
-    var qc = q.replace(/\s+/g, "");
-    if (scope === "file" && entry.kind !== "file") return false;
-    if (scope === "folder" && entry.kind !== "dir") return false;
-    if (scope === "type" && entry.kind !== "file") return false;
-    if (scope === "all" || scope === "file" || scope === "folder") {
-      if (fuzzyMatch(entry.name, q)) return true;
-      if (entry.pinyin && fuzzyMatch(entry.pinyin, qc)) return true;
-      if (entry.initials && fuzzyMatch(entry.initials, qc)) return true;
-      if (scope !== "all") return false;
-    }
-    if (scope === "all" || scope === "type") {
-      if (entry.kind === "file") {
-        if (fuzzyMatch(entry.ext, qc)) return true;
-        if (fuzzyMatch(entry.typeLabel, q)) return true;
-      }
-    }
-    return false;
-  }
-
-  /* XHR 上传（为了拿到进度） */
-  function uploadFile(path, file, overwrite, uid) {
-    return new Promise(function (resolve, reject) {
-      var auth = getAuth();
-      if (!auth) {
-        showLogin("请先登录");
-        reject(authError());
-        return;
-      }
-      var xhr = new XMLHttpRequest();
-      xhr.open("POST", putUrl(path, file.name, overwrite));
-      xhr.setRequestHeader("Authorization", "Basic " + auth.b64);
-      xhr.upload.onprogress = function (e) {
-        if (e.lengthComputable && e.total > 0) {
-          setQueue(uid, "上传中", Math.round((e.loaded / e.total) * 100));
-        }
-      };
-      xhr.onload = function () {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          setQueue(uid, "完成", 100);
-          resolve();
-        } else if (xhr.status === 401) {
-          clearAuth();
-          showLogin("邮箱或应用密码错误，或登录已过期，请重新登录");
-          reject(authError());
-        } else {
-          var msg = "上传失败（" + xhr.status + "）";
-          try {
-            var j = JSON.parse(xhr.responseText);
-            if (j && j.error && j.error.message) msg = j.error.message;
-          } catch (e) { /* 忽略 */ }
-          reject(new Error(msg));
-        }
-      };
-      xhr.onerror = function () { reject(new TypeError("网络错误，上传中断")); };
-      xhr.onabort = function () { reject(new Error("上传被取消")); };
-      var fd = new FormData();
-      fd.append("file", file);
-      xhr.send(fd);
-    });
-  }
-
-  async function downloadFile(path) {
-    var res = await koofrFetch(getUrl(path, true));
-    if (!res.ok) throw new Error(await apiErrorText(res));
-    var blob = await res.blob();
-    var a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = fileName(path);
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(function () { URL.revokeObjectURL(a.href); }, 60000);
   }
 
   /* ================= 视图切换 ================= */
@@ -540,6 +231,19 @@
     searchPanel.innerHTML = "";
   }
 
+  function openMobileSearch() {
+    if (!topbar) return;
+    topbar.classList.add("search-open");
+    searchInput.focus();
+  }
+
+  function closeMobileSearch() {
+    if (!topbar) return;
+    topbar.classList.remove("search-open");
+    searchInput.blur();
+    closeSearchPanel();
+  }
+
   function showLogin(message) {
     resetState();
     clearAllCaches();
@@ -547,6 +251,8 @@
     mainView.hidden = true;
     logoutBtn.hidden = true;
     treeToggle.hidden = true;
+    if (topbar) topbar.classList.remove("search-open");
+    if (searchIcon) searchIcon.hidden = true;
     searchWrap.hidden = true;
     $("modeToggle").hidden = true;
     guideBtn.hidden = true;
@@ -559,6 +265,7 @@
     closeDrawer();
     closeSearchPanel();
     batchBar.hidden = true;
+    document.body.classList.remove("batch-active");
     hideBanner();
     setLoginError(message || "");
   }
@@ -567,6 +274,7 @@
     loginView.hidden = true;
     mainView.hidden = false;
     logoutBtn.hidden = false;
+    if (searchIcon) searchIcon.hidden = false;
     searchWrap.hidden = false;
     $("modeToggle").hidden = false;
     guideBtn.hidden = false;
@@ -575,7 +283,13 @@
   }
 
   function updateTreeToggle() {
-    treeToggle.hidden = !window.matchMedia("(max-width: 768px)").matches;
+    treeToggle.hidden = !window.matchMedia(MOBILE_MQ).matches;
+    if (state.selectedPath !== null && state.mode === "download") {
+      breadcrumb.hidden = !window.matchMedia(MOBILE_MQ).matches;
+      if (!breadcrumb.hidden && !breadcrumb.innerHTML) renderBreadcrumb();
+    } else {
+      breadcrumb.hidden = true;
+    }
   }
 
   function setLoginError(msg) {
@@ -800,8 +514,10 @@
   function selectRoot() {
     clearSelection();
     state.selectedPath = null;
+    breadcrumb.hidden = true;
     renderTree();
     closeSearchPanel();
+    closeMobileSearch();
     closeDrawer();
     fillFolderSelect(ROOT);
     if (state.mode === "download") {
@@ -814,10 +530,18 @@
     state.selectedPath = path;
     renderTree();
     closeSearchPanel();
+    closeMobileSearch();
     closeDrawer();
     fillFolderSelect(path);
     syncTreeToSelection(path);
     if (state.mode === "upload") return;
+    /* 移动端显示面包屑路径（桌面端保持现状：不显示） */
+    if (window.matchMedia(MOBILE_MQ).matches) {
+      renderBreadcrumb();
+      breadcrumb.hidden = false;
+    } else {
+      breadcrumb.hidden = true;
+    }
     content.innerHTML = '<div class="loading">加载中…</div>';
     try {
       state.currentFiles = await listFolder(path);
@@ -869,6 +593,10 @@
     Array.prototype.forEach.call(pathBtns, function (b) {
       b.addEventListener("click", function () { selectFolder(b.getAttribute("data-path")); });
     });
+    /* 移动端深层路径较长时，自动滚到末尾保证当前路径可见 */
+    if (window.matchMedia(MOBILE_MQ).matches) {
+      breadcrumb.scrollLeft = breadcrumb.scrollWidth;
+    }
   }
 
   /* ================= 右侧内容 ================= */
@@ -1169,6 +897,7 @@
     var n = Object.keys(state.selected).length;
     var show = state.mode === "download" && state.selectedPath !== null && n > 0;
     batchBar.hidden = !show;
+    document.body.classList.toggle("batch-active", show);
     batchCount.textContent = String(n);
     batchDownloadBtn.textContent = state.batchArmed ? "再次点击确认下载" : "批量下载";
   }
@@ -1222,26 +951,6 @@
   }
 
   /* Koofr 支持把文件夹内选中的文件打包下载 */
-  async function batchDownloadZip(folderPath, names) {
-    var url = BASE + "/content/api/v2.1/mounts/" + encodeURIComponent(MOUNT) + "/files/get?path=" +
-      encodePath(folderPath) + "&force=true";
-    var res = await koofrFetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: names.map(function (n) { return "files=" + encodeURIComponent(n); }).join("&")
-    });
-    if (!res.ok) throw new Error(await apiErrorText(res));
-    var blob = await res.blob();
-    var a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = fileName(folderPath) + ".zip";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(function () { URL.revokeObjectURL(a.href); }, 60000);
-  }
-
-  /* 下载整个文件夹：不传文件列表时，Koofr 返回整包 ZIP */
   function downloadFolderZip(folderPath) {
     return batchDownloadZip(folderPath, []);
   }
@@ -1294,37 +1003,6 @@
     clearTimeout(batchTimer);
     updateCardSelection();
     updateBatchBar();
-  }
-
-  /* ================= 预览 ================= */
-
-  async function previewFile(path) {
-    var res = await koofrFetch(getUrl(path, false));
-    if (!res.ok) throw new Error(await apiErrorText(res));
-    var blob = await res.blob();
-    var objUrl = URL.createObjectURL(blob);
-    previewObjectUrl = objUrl;
-    var isPdf = extOf(fileName(path)) === "pdf";
-    var body = isPdf
-      ? '<iframe class="preview-frame" src="' + objUrl + '"></iframe>'
-      : '<img class="preview-img" src="' + objUrl + '" alt="' + esc(fileName(path)) + '">';
-    var action = await showModal({
-      title: fileName(path),
-      body: body,
-      wide: true,
-      buttons: [
-        { text: "下载", value: "download" },
-        { text: "关闭", value: "close", primary: true }
-      ]
-    });
-    if (previewObjectUrl) { URL.revokeObjectURL(previewObjectUrl); previewObjectUrl = null; }
-    if (action === "download") {
-      try {
-        await downloadFile(path);
-      } catch (err) {
-        if (!err.auth) showBanner(friendlyError(err), true);
-      }
-    }
   }
 
   /* ================= 上传 ================= */
@@ -1385,8 +1063,57 @@
     var files = Array.prototype.slice.call(fileList);
     if (!files.length) return;
     var targetPath = folderSelect.value || ROOT;
+    /* 文件夹选择（webkitdirectory）带相对路径：自动新建同名文件夹结构后上传 */
+    var hasFolderPath = files.some(function (f) {
+      return f && f.webkitRelativePath && f.webkitRelativePath.indexOf("/") >= 0;
+    });
+    if (hasFolderPath) {
+      await handleFolderFiles(files, targetPath);
+      return;
+    }
     var items = files.map(function (f) { return { file: f, path: targetPath }; });
     await uploadFileList(items, targetPath);
+  }
+
+  /* 按 webkitRelativePath 重建同名文件夹结构：目标/选中文件夹/子目录/文件 */
+  async function handleFolderFiles(files, targetPath) {
+    var items = [];
+    var dirSet = {};
+    files.forEach(function (f) {
+      var rel = (f.webkitRelativePath || f.name).split("/").filter(Boolean);
+      rel.pop();
+      var dirPath = targetPath;
+      rel.forEach(function (seg) {
+        dirPath = joinPath(dirPath, seg);
+        dirSet[dirPath] = true;
+      });
+      items.push({ file: f, path: dirPath });
+    });
+    await ensureDirs(dirSet, targetPath);
+    await uploadFileList(items, targetPath);
+  }
+
+  /* 依次确保目录存在：缺失则新建（含空目录），并同步目录树 */
+  async function ensureDirs(dirSet, targetPath) {
+    var dirs = Object.keys(dirSet).sort(function (a, b) {
+      return a.split("/").length - b.split("/").length;
+    });
+    var treeDirty = false;
+    for (var i = 0; i < dirs.length; i++) {
+      var d = dirs[i];
+      if (d === targetPath) continue;
+      try {
+        await listFolder(d);
+      } catch (e) {
+        try {
+          await createFolder(dirOf(d), fileName(d));
+          delete state.treeCache[dirOf(d)];
+          invalidatePath(dirOf(d));
+          treeDirty = true;
+        } catch (e2) { /* 已存在或创建失败则继续尝试上传 */ }
+      }
+    }
+    if (treeDirty) renderTree();
   }
 
   /* 通用上传队列：items = [{ file, path }]，支持多目标文件夹 */
@@ -1483,6 +1210,7 @@
       if (!entry) { maybeDone(); return; }
       if (entry.isFile) {
         pending++;
+        if (typeof entry.file !== "function") { pending--; maybeDone(); return; }
         entry.file(function (file) {
           results.push({ file: file, relPath: basePath ? basePath + "/" + file.name : file.name });
           pending--;
@@ -1490,7 +1218,14 @@
         }, function () { pending--; maybeDone(); });
       } else if (entry.isDirectory) {
         pending++;
-        var reader = entry.createReader();
+        /* 记录目录本身（含空目录），保证"自动新建同名文件夹" */
+        results.push({ dir: true, relPath: basePath ? basePath + "/" + entry.name : entry.name });
+        var reader = typeof entry.createReader === "function" ? entry.createReader() : null;
+        if (!reader || typeof reader.readEntries !== "function") {
+          pending--;
+          maybeDone();
+          return;
+        }
         (function readNext() {
           reader.readEntries(function (entries) {
             if (!entries || !entries.length) { pending--; maybeDone(); return; }
@@ -1514,22 +1249,50 @@
   }
 
   /* 拖入文件夹：按相对路径创建缺失的子文件夹，再逐个上传 */
-  async function handleDroppedFolders(dataItems) {
+  async function handleDroppedFolders(dataItems, fileList) {
     showBanner("正在处理文件夹…", false);
     collectDroppedFiles(dataItems, function (results) {
+      /* 兜底：部分浏览器 entries API 读不到目录内文件（如 Safari/iPadOS Files 拖拽），
+         用 dataTransfer.files 补齐，避免"上传文件夹却提示空文件夹" */
+      if (fileList && fileList.length) {
+        var byRel = {};
+        var names = {};
+        var dirNames = {};
+        results.forEach(function (r) {
+          if (r.dir) {
+            dirNames[fileName(r.relPath)] = true;
+            return;
+          }
+          if (r.file) {
+            names[r.file.name] = true;
+            byRel[r.file.name + "|" + r.relPath] = true;
+          }
+        });
+        Array.prototype.forEach.call(fileList, function (f) {
+          var rel = (f.webkitRelativePath || f.name).split("/").filter(Boolean).join("/");
+          if (byRel[f.name + "|" + rel]) return;
+          /* 文件夹本身会以伪文件出现在 dataTransfer.files（名为文件夹名、大小 0），跳过 */
+          if (!f.webkitRelativePath && dirNames[f.name]) return;
+          /* 平铺的同名文件（无相对路径）与已收集文件去重，避免重复上传 */
+          if (!f.webkitRelativePath && names[f.name]) return;
+          byRel[f.name + "|" + rel] = true;
+          results.push({ file: f, relPath: rel });
+        });
+      }
       handleDroppedFileList(results);
     });
   }
 
   async function handleDroppedFileList(results) {
-    if (!results.length) {
-      showBanner("未读取到可上传的文件：请点击「选择文件夹」上传，或把文件夹压缩后再拖入", true);
-      return;
-    }
     var targetPath = folderSelect.value || ROOT;
     var items = [];
     var dirSet = {};
+    var fileCount = 0;
     results.forEach(function (r) {
+      if (r.dir) {
+        dirSet[joinPath(targetPath, r.relPath)] = true;
+        return;
+      }
       var parts = r.relPath.split("/");
       parts.pop();
       var dirPath = targetPath;
@@ -1538,27 +1301,22 @@
         dirSet[dirPath] = true;
       });
       items.push({ file: r.file, path: dirPath });
+      fileCount++;
     });
-
-    var dirs = Object.keys(dirSet).sort(function (a, b) {
-      return a.split("/").length - b.split("/").length;
-    });
-    var treeDirty = false;
-    for (var i = 0; i < dirs.length; i++) {
-      var d = dirs[i];
-      if (d === targetPath) continue;
-      try {
-        await listFolder(d);
-      } catch (e) {
-        try {
-          await createFolder(dirOf(d), fileName(d));
-          delete state.treeCache[dirOf(d)];
-          invalidatePath(dirOf(d));
-          treeDirty = true;
-        } catch (e2) { /* 已存在或创建失败则继续尝试上传 */ }
-      }
+    if (fileCount === 0 && !Object.keys(dirSet).length) {
+      showBanner("未读取到可上传的内容，请重试", true);
+      return;
     }
-    if (treeDirty) renderTree();
+    await ensureDirs(dirSet, targetPath);
+    if (!items.length) {
+      showBanner("已创建空文件夹（文件夹内没有可上传的文件）", false);
+      try {
+        state.treeCache[targetPath] = await ensureTreeChildren(targetPath);
+      } catch (e) { /* 目录刷新失败则保持现状 */ }
+      renderTree();
+      fillFolderSelect(targetPath);
+      return;
+    }
     await uploadFileList(items, targetPath);
   }
 
@@ -1624,7 +1382,7 @@
         }
       }
       if (hasDir) {
-        handleDroppedFolders(items);
+        handleDroppedFolders(items, e.dataTransfer.files);
         return;
       }
       if (e.dataTransfer && e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
@@ -1656,139 +1414,6 @@
     });
   }
 
-  /* ================= 搜索 ================= */
-
-  /* 搜索范围自定义下拉（纯视觉层；原生 select 仅作值载体，change 逻辑不变） */
-  function initScopePicker() {
-    var picker = $("scopePicker");
-    var trigger = $("scopeTrigger");
-    var menu = $("scopeMenu");
-    var native = $("searchScope");
-    var label = $("scopeLabel");
-    if (!picker || !trigger || !menu || !native || !label) return;
-
-    function close() {
-      menu.hidden = true;
-      trigger.setAttribute("aria-expanded", "false");
-    }
-
-    function sync() {
-      var opt = native.options[native.selectedIndex];
-      label.textContent = opt ? opt.textContent : "全部";
-      var opts = menu.querySelectorAll("[data-scope]");
-      Array.prototype.forEach.call(opts, function (o) {
-        var on = o.getAttribute("data-scope") === native.value;
-        o.classList.toggle("active", on);
-        o.setAttribute("aria-selected", on ? "true" : "false");
-      });
-    }
-
-    trigger.addEventListener("click", function () {
-      if (menu.hidden) {
-        sync();
-        menu.hidden = false;
-        trigger.setAttribute("aria-expanded", "true");
-      } else {
-        close();
-      }
-    });
-
-    Array.prototype.forEach.call(menu.querySelectorAll("[data-scope]"), function (o) {
-      o.addEventListener("click", function () {
-        native.value = o.getAttribute("data-scope");
-        native.dispatchEvent(new Event("change", { bubbles: true }));
-        sync();
-        close();
-      });
-    });
-
-    trigger.addEventListener("keydown", function (e) {
-      if (e.key === "Escape") close();
-    });
-
-    document.addEventListener("click", function (e) {
-      if (!picker.contains(e.target)) close();
-    });
-
-    sync();
-  }
-
-  function initSearch() {
-    searchInput.addEventListener("input", function () {
-      var q = searchInput.value.trim();
-      clearTimeout(searchTimer);
-      if (!q) { closeSearchPanel(); return; }
-      searchTimer = setTimeout(function () { runSearch(q); }, 350);
-    });
-    searchInput.addEventListener("keydown", function (e) {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        clearTimeout(searchTimer);
-        runSearch(searchInput.value.trim());
-      }
-    });
-    searchScope.addEventListener("change", function () {
-      updateSearchPlaceholder();
-      var q = searchInput.value.trim();
-      if (q) runSearch(q);
-      else searchInput.focus();
-    });
-    document.addEventListener("click", function (e) {
-      if (!searchWrap.contains(e.target)) closeSearchPanel();
-    });
-    updateSearchPlaceholder();
-  }
-
-  function updateSearchPlaceholder() {
-    var map = {
-      all: "搜索文件名 / 文件夹名 / 类型",
-      file: "搜索文件名，支持拼音",
-      folder: "搜索文件夹名，支持拼音",
-      type: "搜索文件类型，如 pdf / 文档"
-    };
-    searchInput.placeholder = map[searchScope.value] || CONFIG.searchPlaceholder || "搜索…";
-  }
-
-  async function runSearch(q) {
-    if (!q) { closeSearchPanel(); return; }
-    var scope = searchScope.value || "all";
-    searchPanel.innerHTML = '<div class="search-item muted">搜索中…</div>';
-    searchPanel.hidden = false;
-    try {
-      var idx = await ensureSearchIndex();
-      if (searchInput.value.trim() !== q) return;
-      var ql = q.toLowerCase().trim();
-      var hits = [];
-      for (var i = 0; i < idx.entries.length && hits.length < SEARCH_LIMIT; i++) {
-        if (entryMatches(idx.entries[i], ql, scope)) hits.push(idx.entries[i]);
-      }
-      if (!hits.length) {
-        searchPanel.innerHTML = '<div class="search-item muted">没有找到匹配的结果</div>';
-        return;
-      }
-      searchPanel.innerHTML = hits.map(function (h) {
-        var dir = h.kind === "dir" ? h.path : dirOf(h.path);
-        var icon = h.kind === "dir" ? ICONS.folder : ICONS.file;
-        var meta = h.kind === "dir"
-          ? "文件夹"
-          : esc(h.typeLabel) + " · " + fmtSize(h.size);
-        return '<button class="search-item" data-open="' + esc(dir) + '">' +
-          '<span class="search-name">' + icon + esc(h.name) + '</span>' +
-          '<span class="search-path">' + esc(relPath(dir)) + '</span>' +
-          '<span class="search-time">' + meta + '</span></button>';
-      }).join("");
-      searchPanel.hidden = false;
-      Array.prototype.forEach.call(searchPanel.querySelectorAll("[data-open]"), function (b) {
-        b.addEventListener("click", function () {
-          selectFolder(b.getAttribute("data-open"));
-        });
-      });
-    } catch (err) {
-      if (err.auth) return;
-      searchPanel.innerHTML = '<div class="search-item muted">搜索失败，请稍后重试</div>';
-    }
-  }
-
   /* ================= 教学引导 ================= */
 
   var GUIDE_SEEN_KEY = "club_tour_seen";
@@ -1799,17 +1424,17 @@
   var tourSteps = [
     {
       id: 1, title: "目录",
-      text: "左侧是目录，可点击文件夹前的箭头展开子目录，由此进入子文件夹。",
+      text: "左侧是「目录」，点击箭头展开子目录，由此进入/切换文件夹",
       targets: [".sidebar"], view: "home"
     },
     {
       id: 2, title: "资料板块",
-      text: "中间是文件夹卡片，单击即可进入资料页。",
+      text: "中间是「文件夹」，单击进入资料页",
       targets: [".subject-grid"], view: "home"
     },
     {
       id: 3, title: "最新资料更新",
-      text: "右侧是最新资料更新，点击任意一条即可进入资料页并定位该资料。请点击！",
+      text: "右侧是「最新资料更新」，点击资料进入资料页并定位该资料",
       targets: [".update-list"], view: "home", waitClick: true,
       done: function () {
         return state.mode === "download" && state.selectedPath !== null &&
@@ -1819,27 +1444,27 @@
     },
     {
       id: 4, title: "下载",
-      text: "资料页中点击「下载」需要两次：第一次确认，第二次才下载，防止误触。",
+      text: "「下载」需两次点击：第一次确认，第二次下载",
       targets: ["[data-confirm-download]"], view: "folder"
     },
     {
       id: 5, title: "批量勾选",
-      text: "勾选卡片左侧的方框，可批量选择后点击底部「批量下载」。",
+      text: "勾选方框，可随后点击底部「批量下载」",
       targets: [".res-select"], view: "folder"
     },
     {
       id: 6, title: "返回主页",
-      text: "「返回主页」按钮或左上角「社团资源库」都可回到主页。",
+      text: "「返回主页」按钮或左上角「社团资源库」，都可回到主页",
       targets: ["[data-home]", "#brandTitle"], view: "folder"
     },
     {
       id: 7, title: "切换目录",
-      text: "点击左侧目录可切换查看其他文件夹。",
+      text: "点击左侧「目录」，切换查看其他文件夹",
       targets: [".sidebar"], view: "folder"
     },
     {
       id: 8, title: "上传 / 下载切换",
-      text: "顶栏可切换「上传 / 下载」模式，请点击「上传」进入上传页面。",
+      text: "顶栏切换「上传/下载」模式",
       targets: ["#modeToggle"], view: "folder", waitClick: true,
       done: function () {
         return state.mode === "upload" && !uploadArea.hidden;
@@ -1847,20 +1472,84 @@
     },
     {
       id: 9, title: "选择目录",
-      text: "上传前先选择目标文件夹：左侧目录或右侧「上传到」下拉框均可。",
+      text: "上传前选择目标文件夹：左侧「目录」或「上传到」下拉框",
       targets: [".sidebar", "#folderSelect"], view: "upload"
     },
     {
       id: 10, title: "新建文件夹",
-      text: "或者点击「新建文件夹」先创建目录。",
+      text: "或者点击「新建文件夹」，先创建目录",
       targets: ["#newFolderBtn"], view: "upload"
     },
     {
       id: 11, title: "上传文件",
-      text: "把文件拖入上传窗口，或点击选择文件，即可上传。",
+      text: "拖入或点击选择文件上传（无法选择文件夹）",
       targets: ["#uploadZone"], view: "upload"
     }
   ];
+
+  /* 移动端（≤768px）：按手机特性生成引导步骤
+   * - 第 1 步高亮顶栏「目录」图标，点击「下一步」后自动展开抽屉 0.5s
+   * - 第 7 步与第 1 步聚焦位置一致（高亮顶栏「目录」图标）
+   * - 第 9 步只指向「上传到」下拉框（抽屉会遮住它） */
+  function isMobileTour() {
+    return window.matchMedia(MOBILE_MQ).matches;
+  }
+
+  function tourStepsForViewport() {
+    var mobile = isMobileTour();
+    return tourSteps.map(function (s) {
+      var step = Object.assign({}, s);
+      step.targets = (s.targets || []).slice();
+      if (mobile && step.id === 1) {
+        step.targets = ["#treeToggle"];
+        step.text = "点击打开左侧「目录」，现为自动展示";
+        step.onNext = function () {
+          sidebar.classList.add("open");
+          sidebarMask.hidden = false;
+          return new Promise(function (resolve) {
+            /* 等抽屉滑出动画（0.2s）完成后展示 0.5s，再收起并进入下一步 */
+            setTimeout(function () {
+              closeDrawer();
+              resolve();
+            }, 240 + 500);
+          });
+        };
+      } else if (mobile && step.id === 2) {
+        step.text = "中间是「文件夹卡片」，单击进入资料页";
+      } else if (mobile && step.id === 3) {
+        step.text = "底部为「最新资料更新」，点击进入资料页并定位该资料";
+      } else if (mobile && step.id === 4) {
+        step.text = "「下载」需点击两次：第一次确认，第二次下载，防误触";
+      } else if (mobile && step.id === 6) {
+        step.text = "「返回主页」按钮或「左上角图标」都可返回主页";
+      } else if (mobile && step.id === 7) {
+        step.targets = ["#treeToggle"];
+        step.text = "资料页也要点击切换「目录」";
+      } else if (mobile && step.id === 8) {
+        step.text = "切换「上传/下载」模式";
+      } else if (mobile && step.id === 9) {
+        step.targets = ["#folderSelect"];
+        step.text = "上传前先选择目标文件夹";
+      }
+      return step;
+    });
+  }
+
+  /* 引导步骤进入前：移动端按需开/关目录抽屉，保证高亮目标在屏幕内 */
+  function syncTourDrawer(step) {
+    if (!isMobileTour()) return Promise.resolve();
+    var needsSidebar = (step.targets || []).indexOf(".sidebar") !== -1;
+    if (needsSidebar) {
+      sidebar.classList.add("open");
+      sidebarMask.hidden = false;
+      /* 等抽屉滑出动画（0.2s）完成后再定位高亮与提示框，避免测到半开位置 */
+      return new Promise(function (resolve) {
+        setTimeout(resolve, 240);
+      });
+    }
+    closeDrawer();
+    return Promise.resolve();
+  }
 
   function isHomeShown() {
     return state.mode === "download" && state.selectedPath === null &&
@@ -1912,6 +1601,8 @@
     }
     return done.then(function () {
       if (needExpand) return expandAllTree();
+    }).then(function () {
+      return syncTourDrawer(step);
     });
   }
 
@@ -1941,7 +1632,8 @@
     var saved = null;
     try { saved = parseInt(localStorage.getItem(GUIDE_PROGRESS_KEY), 10); } catch (e) { /* 忽略 */ }
     if (isNaN(saved) || saved < 0 || saved >= tourSteps.length) saved = 0;
-    window.GuideTour.start(tourSteps, {
+    var steps = tourStepsForViewport();
+    window.GuideTour.start(steps, {
       startIndex: saved,
       ensure: ensureTourView,
       onStep: saveTourProgress,
@@ -1955,6 +1647,7 @@
       confirmTimer = null;
       confirmPath = null;
     }
+    closeDrawer();
     if (!tourRestore) return;
     var r = tourRestore;
     tourRestore = null;
@@ -2048,6 +1741,11 @@
         });
       });
 
+      /* 弹窗渲染完成后回调（用于 docx/xlsx/pptx 等异步渲染） */
+      if (typeof opts.onRender === "function") {
+        try { opts.onRender(modalRoot.querySelector(".modal")); } catch (e) { /* 忽略 */ }
+      }
+
       var inp = modalRoot.querySelector("#modalInput");
       if (inp) {
         inp.addEventListener("keydown", function (e) {
@@ -2107,4 +1805,3 @@
       showLogin();
     }
   });
-})();

@@ -13,6 +13,9 @@
       <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3.5" y="4" width="17" height="5" rx="1.5"></rect><rect x="3.5" y="9.5" width="17" height="5" rx="1.5"></rect><rect x="3.5" y="15" width="17" height="5" rx="1.5"></rect></svg>
       <span id="brandText">社团资源库</span>
     </button>
+    <button class="search-icon" type="button" aria-label="搜索" title="搜索">
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="6"></circle><path d="M20.5 20.5L15.5 15.5"></path></svg>
+    </button>
     <div class="search-wrap" id="searchWrap">
       <div class="scope-picker" id="scopePicker">
         <button class="scope-trigger" id="scopeTrigger" type="button" aria-haspopup="listbox" aria-expanded="false" title="搜索范围">
@@ -32,6 +35,9 @@
           <option value="type">文件类型</option>
         </select>
       </div>
+      <button class="search-close" type="button" aria-label="收起搜索" title="收起搜索">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+      </button>
       <input type="search" id="globalSearch" placeholder="搜索文件名…" autocomplete="off">
       <div class="search-panel hidden" id="searchPanel"></div>
     </div>
@@ -105,7 +111,7 @@
             </div>
             <div id="uploadZone" class="upload-zone" role="button" tabindex="0">
               <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 14V4M8 8l4-4 4 4"></path><path d="M4.5 20h15"></path></svg>
-              <span>拖拽文件到此处，或点击选择文件（可多选）</span>
+              <span>点击或拖拽皆可</span>
               <input id="fileInput" type="file" multiple hidden>
             </div>
             <div id="uploadQueue" class="upload-queue" hidden></div>
@@ -127,9 +133,15 @@
 
   <div id="modalRoot"></div>
 
-  <script src="config.js?v=15"></script>
-  <script src="pinyin.js?v=15"></script>
-  <script src="guide.js?v=15"></script>
-  <script src="app.js?v=15"></script>
+  <script src="js/config.js?v=22"></script>
+  <script src="js/pinyin.js?v=22"></script>
+  <script src="js/jszip.js?v=22"></script>
+  <script src="js/docx-preview.js?v=22"></script>
+  <script src="js/xlsx.js?v=22"></script>
+  <script src="js/api.js?v=22"></script>
+  <script src="js/search.js?v=22"></script>
+  <script src="js/preview.js?v=22"></script>
+  <script src="js/guide.js?v=22"></script>
+  <script src="js/app.js?v=22"></script>
 </body>
 </html>

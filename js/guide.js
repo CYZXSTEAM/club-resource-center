@@ -1,6 +1,7 @@
 /* 交互式教学引导引擎（纯原生，无依赖）
  * 用法：GuideTour.start(steps, { ensure, onExit })
- * 步骤结构：{ id, title, text, targets:[选择器], view, waitClick, done, onComplete }
+ * 步骤结构：{ id, title, text, targets:[选择器], view, waitClick, done, onNext, onComplete }
+ * onNext：点击「下一步」后执行，若返回 Promise，则等其 resolve 后再进入下一步
  */
 (function () {
   "use strict";
@@ -65,7 +66,22 @@
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   }
 
-  function next() { goTo(current + 1); }
+  function next() {
+    if (!active) return;
+    var i = current;
+    var step = steps[i];
+    /* 点击「下一步」后允许先执行异步动作（如展开目录展示 0.5s 再收起） */
+    if (typeof step.onNext === "function") {
+      var r = step.onNext();
+      if (r && typeof r.then === "function") {
+        r.then(function () {
+          if (active && current === i) goTo(i + 1);
+        });
+        return;
+      }
+    }
+    goTo(i + 1);
+  }
   function prev() { goTo(current - 1); }
 
   function onKey(e) {
@@ -162,8 +178,14 @@
       /* 需要真实点击的步骤：突出强调"请点击" */
       textHtml = textHtml.replace(/请点击/g, '<span class="guide-click-hint">请点击</span>');
     }
+    /* "第 N 步"右侧的操作提示：蓝色=下一步按钮，橙色=点击高亮目标 */
+    var progressHint = isWait
+      ? '<span class="guide-hint orange">橙色点击对应按钮</span>'
+      : (isLast
+          ? '<span class="guide-hint blue">蓝色点击完成</span>'
+          : '<span class="guide-hint blue">蓝色点击下一步</span>');
     tip.innerHTML =
-      '<div class="guide-progress">第 ' + (current + 1) + ' / ' + steps.length + ' 步</div>' +
+      '<div class="guide-progress"><span>第 ' + (current + 1) + ' / ' + steps.length + ' 步</span>' + progressHint + '</div>' +
       (step.title ? '<div class="guide-title">' + esc(step.title) + '</div>' : "") +
       '<div class="guide-text">' + textHtml + '</div>' +
       '<div class="guide-actions">' + actionsHtml + '</div>';
@@ -210,18 +232,25 @@
     var th = tip.offsetHeight || 180;
     var vw = window.innerWidth;
     var vh = window.innerHeight;
+    var margin = 8;
     var cx, cy;
     if (rects.length) {
       var r = rects[0];
-      cx = Math.min(Math.max(r.left + r.width / 2 - tw / 2, 8), vw - tw - 8);
+      cx = r.left + r.width / 2 - tw / 2;
       cy = r.bottom + 12;
-      if (cy + th > vh - 8 && r.top - th - 12 > 8) cy = r.top - th - 12;
+      /* 下方放不下时优先放到目标上方 */
+      if (cy + th > vh - margin) cy = r.top - th - 12;
     } else {
       cx = (vw - tw) / 2;
       cy = (vh - th) / 2;
     }
-    tip.style.left = Math.max(8, cx) + "px";
-    tip.style.top = Math.max(8, cy) + "px";
+    /* 最终兜底：目标过大（如全屏抽屉）或视口过小时，强制回到屏幕内 */
+    var maxLeft = vw - tw - margin;
+    var maxTop = vh - th - margin;
+    if (maxLeft < margin) maxLeft = margin;
+    if (maxTop < margin) maxTop = margin;
+    tip.style.left = Math.round(Math.max(margin, Math.min(maxLeft, cx))) + "px";
+    tip.style.top = Math.round(Math.max(margin, Math.min(maxTop, cy))) + "px";
   }
 
   function esc(s) {
