@@ -83,9 +83,9 @@ var previewObjectUrl = null;
   }
 
   async function previewFile(path) {
-    var res = await koofrFetch(getUrl(path, false));
+    var res = await koofrFetch(getUrl(path, false), {}, NET_TIMEOUT);
     if (!res.ok) throw new Error(await apiErrorText(res));
-    var blob = await res.blob();
+    var blob = await withNetTimeout(res.blob(), NET_TIMEOUT);
     var objUrl = URL.createObjectURL(blob);
     previewObjectUrl = objUrl;
     var name = fileName(path);

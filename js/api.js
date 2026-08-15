@@ -20,7 +20,40 @@ function invalidatePath(path) {
 
 var memoryAuth = null;        /* 内存中的登录凭据，刷新即清 */
 
-  /* ================= 登录凭据（仅存内存，刷新即清） ================= */
+/* 网络超时：预览/下载超过 10 秒无响应则自动中止 */
+var NET_TIMEOUT = 10000;
+var NET_TIMEOUT_MSG = "网络错误：请求超时（超过 10 秒无响应）";
+
+function fetchWithAbort(url, options, timeoutMs) {
+  if (typeof AbortController === "undefined") return fetch(url, options);
+  var ctrl = new AbortController();
+  var timer = setTimeout(function () { ctrl.abort(); }, timeoutMs || NET_TIMEOUT);
+  return fetch(url, Object.assign({}, options, { signal: ctrl.signal })).then(function (res) {
+    clearTimeout(timer);
+    return res;
+  }, function (err) {
+    clearTimeout(timer);
+    if (err && err.name === "AbortError") throw new Error(NET_TIMEOUT_MSG);
+    throw err;
+  });
+}
+
+function withNetTimeout(promise, timeoutMs) {
+  return new Promise(function (resolve, reject) {
+    var timer = setTimeout(function () {
+      reject(new Error(NET_TIMEOUT_MSG));
+    }, timeoutMs || NET_TIMEOUT);
+    promise.then(function (v) {
+      clearTimeout(timer);
+      resolve(v);
+    }, function (e) {
+      clearTimeout(timer);
+      reject(e);
+    });
+  });
+}
+
+/* ================= 登录凭据（仅存内存，刷新即清） ================= */
 
   function authError() {
     var e = new Error("AUTH");
@@ -43,7 +76,7 @@ var memoryAuth = null;        /* 内存中的登录凭据，刷新即清 */
 
   /* ================= Koofr API ================= */
 
-  async function koofrFetch(url, options) {
+  async function koofrFetch(url, options, timeoutMs) {
     var auth = getAuth();
     if (!auth) {
       showLogin("请先登录");
@@ -51,7 +84,8 @@ var memoryAuth = null;        /* 内存中的登录凭据，刷新即清 */
     }
     options = options || {};
     var headers = Object.assign({ Authorization: "Basic " + auth.b64 }, options.headers || {});
-    var res = await fetch(url, Object.assign({}, options, { headers: headers }));
+    var merged = Object.assign({}, options, { headers: headers });
+    var res = timeoutMs ? await fetchWithAbort(url, merged, timeoutMs) : await fetch(url, merged);
     if (res.status === 401) {
       clearAuth();
       showLogin("邮箱或应用密码错误，或登录已过期，请重新登录");
@@ -199,9 +233,9 @@ var memoryAuth = null;        /* 内存中的登录凭据，刷新即清 */
   }
 
   async function downloadFile(path) {
-    var res = await koofrFetch(getUrl(path, true));
+    var res = await koofrFetch(getUrl(path, true), {}, NET_TIMEOUT);
     if (!res.ok) throw new Error(await apiErrorText(res));
-    var blob = await res.blob();
+    var blob = await withNetTimeout(res.blob(), NET_TIMEOUT);
     var a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = fileName(path);
@@ -218,9 +252,9 @@ var memoryAuth = null;        /* 内存中的登录凭据，刷新即清 */
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: names.map(function (n) { return "files=" + encodeURIComponent(n); }).join("&")
-    });
+    }, NET_TIMEOUT);
     if (!res.ok) throw new Error(await apiErrorText(res));
-    var blob = await res.blob();
+    var blob = await withNetTimeout(res.blob(), NET_TIMEOUT);
     var a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = fileName(folderPath) + ".zip";
