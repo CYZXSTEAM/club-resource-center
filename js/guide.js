@@ -120,7 +120,7 @@
     var root = document.createElement("div");
     root.id = "guideRoot";
 
-    /* 高亮框 */
+    /* 高亮框：统一使用页面标准圆角 */
     rects.forEach(function (r) {
       var h = document.createElement("div");
       h.className = "guide-highlight" + (step.waitClick ? " clickable" : "");
