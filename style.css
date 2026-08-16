@@ -365,6 +365,7 @@ input, textarea { caret-color: var(--accent); }
   align-items: center;
   justify-content: center;
   gap: 6px;
+  text-decoration: none;
   border: 1px solid var(--border-strong);
   background: transparent;
   color: var(--ink);
@@ -1252,7 +1253,12 @@ input, textarea { caret-color: var(--accent); }
   height: 66vh;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
-  background: #111113;
+  background: #f5f6f8;
+}
+
+.preview-fallback {
+  margin: 10px 0 0;
+  text-align: center;
 }
 
 .preview-img {

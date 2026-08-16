@@ -115,29 +115,73 @@ var PREVIEW_MIME = {
           if (!holder || !holder.isConnected) return;
           /* 兜底：按扩展名强制正确 MIME，避免 PDF/媒体因类型缺失显示乱码 */
           var wantType = PREVIEW_MIME[ext];
-          if (wantType && (!blob.type || blob.type === "application/octet-stream")) {
+          if (wantType && blob.type !== wantType) {
             blob = new Blob([blob], { type: wantType });
           }
           var objUrl = URL.createObjectURL(blob);
           previewObjectUrl = objUrl;
+          var openFallback = '<div class="preview-fallback">' +
+            '<a class="btn small" href="#" id="previewOpen">' +
+            '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M14 4h6v6"></path><path d="M20 4l-9 9"></path><path d="M19 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h6"></path></svg>' +
+            '<span>若预览显示异常，请点击在新窗口打开</span>' +
+            '</a></div>';
           var bodyHtml;
           if (ext === "pdf") {
-            bodyHtml = '<iframe class="preview-frame" src="' + objUrl + '"></iframe>';
+            /* PDF 用 DOM API 创建 iframe 并延迟设置 src，规避 Chrome 查看器黑屏 */
+            bodyHtml = '<div id="pdfHolder"></div>' + openFallback;
           } else if (IMAGE_EXT[ext]) {
-            bodyHtml = '<img class="preview-img" src="' + objUrl + '" alt="' + esc(name) + '">';
+            bodyHtml = '<img class="preview-img" src="' + objUrl + '" alt="' + esc(name) + '">' + openFallback;
           } else if (VIDEO_EXT[ext]) {
-            bodyHtml = '<video class="preview-media" controls playsinline src="' + objUrl + '"></video>';
+            bodyHtml = '<video class="preview-media" controls playsinline src="' + objUrl + '"></video>' + openFallback;
           } else if (AUDIO_EXT[ext]) {
-            bodyHtml = '<audio class="preview-audio" controls src="' + objUrl + '"></audio>';
+            bodyHtml = '<audio class="preview-audio" controls src="' + objUrl + '"></audio>' + openFallback;
           } else if (OFFICE_EXT[ext]) {
-            bodyHtml = '<div class="preview-office" id="officePreview"><div class="loading">正在解析…</div></div>';
+            bodyHtml = '<div class="preview-office" id="officePreview"><div class="loading">正在解析…</div></div>' + openFallback;
           } else {
             /* 文本/代码：截断过大内容后以等宽字体展示（转义防注入） */
             var text = await blob.slice(0, 2097152).text();
             if (blob.size > 2097152) text += "\n\n…（文件过大，仅显示前 2MB，可下载查看完整内容）";
-            bodyHtml = '<pre class="preview-text">' + esc(text) + '</pre>';
+            bodyHtml = '<pre class="preview-text">' + esc(text) + '</pre>' + openFallback;
           }
           holder.outerHTML = bodyHtml;
+          if (ext === "pdf") {
+            var pdfHolder = modalEl.querySelector("#pdfHolder");
+            if (pdfHolder) {
+              var frame = document.createElement("iframe");
+              frame.className = "preview-frame";
+              pdfHolder.appendChild(frame);
+              requestAnimationFrame(function () {
+                frame.src = objUrl;
+              });
+            }
+          }
+          var openLink = modalEl.querySelector("#previewOpen");
+          if (openLink) {
+            openLink.addEventListener("click", function (e) {
+              e.preventDefault();
+              /* 独立 blob URL：不随预览弹窗关闭而回收，避免新窗口加载中断 */
+              var mediaUrl = URL.createObjectURL(blob);
+              /* about:blank 子窗口继承当前页面的（含 file:// 等无标准 origin 的）origin，
+                 在其内部引用 blob URL 可绕过"顶层导航到 blob"被浏览器拦截的问题 */
+              var win = window.open("", "_blank");
+              if (!win) return;
+              var isVideo = !!VIDEO_EXT[ext];
+              var isAudio = !!AUDIO_EXT[ext];
+              var content;
+              if (isVideo || isAudio) {
+                var tag = isVideo ? "video controls autoplay playsinline" : "audio controls autoplay";
+                content = '<' + tag + ' src="' + mediaUrl + '"></' + tag.split(" ")[0] + '>';
+              } else {
+                content = '<iframe src="' + mediaUrl + '" style="border:0;width:100%;height:100%;display:block"></iframe>';
+              }
+              win.document.write(
+                '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + esc(name) + '</title>' +
+                '<style>html,body{margin:0;height:100%;background:#0d0d0f;display:flex;align-items:center;justify-content:center}video,audio{max-width:100%;max-height:100vh;outline:none}iframe{width:100%;height:100%;border:0}</style>' +
+                '</head><body>' + content + '</body></html>'
+              );
+              win.document.close();
+            });
+          }
           if (OFFICE_EXT[ext]) {
             var container = modalEl.querySelector("#officePreview");
             if (!container) return;
