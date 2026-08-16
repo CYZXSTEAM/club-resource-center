@@ -3,7 +3,7 @@
 
   var AUTH_KEY = "club_koofr_auth";
   var MOBILE_MQ = "(max-width: 768px)";   /* 与 CSS 断点保持一致 */
-  var RECENT_LIMIT = 5;    /* 主页"最新资料更新"展示条数 */
+  var RECENT_LIMIT = 4;    /* 主页"最新资料更新"展示条数 */
 
 
 
@@ -20,7 +20,6 @@
 
   var queueRows = {};
   var queueUid = 0;
-  var bannerTimer = null;
   var searchTimer = null;
   var confirmPath = null;   /* 二次确认下载：当前处于确认态的文件路径 */
   var confirmTimer = null;
@@ -31,8 +30,10 @@
   var loginView = $("loginView");
   var mainView = $("mainView");
   var logoutBtn = $("logoutBtn");
-  var banner = $("banner");
-  var bannerText = $("bannerText");
+  var statusBar = $("statusBar");
+  var statusText = $("statusText");
+  var statusProgress = $("statusProgress");
+  var statusProgressBar = $("statusProgressBar");
   var sidebar = $("sidebar");
   var sidebarMask = $("sidebarMask");
   var treeToggle = $("treeToggle");
@@ -311,16 +312,14 @@
 
   function showBanner(msg, isError) {
     if (!msg) { hideBanner(); return; }
-    banner.hidden = false;
-    banner.className = "banner" + (isError ? " error" : "");
-    bannerText.textContent = msg;
-    clearTimeout(bannerTimer);
-    bannerTimer = setTimeout(function () { banner.hidden = true; }, isError ? 8000 : 5000);
+    statusBar.className = "status-bar" + (isError ? " error" : "");
+    statusText.textContent = msg;
+    statusProgress.hidden = true;
   }
 
   function hideBanner() {
-    banner.hidden = true;
-    clearTimeout(bannerTimer);
+    statusText.textContent = "状态栏：当前为空";
+    statusProgress.hidden = true;
   }
 
   /* ================= 登录 ================= */
@@ -818,8 +817,10 @@
         clearTimeout(folderConfirmTimer);
         resetFolderDlBtn(dfBtn);
         showBanner("正在打包下载…", false);
-        downloadFolderZip(state.selectedPath).then(function () {
-          showBanner("已开始下载整个文件夹", false);
+        downloadFolderZip(state.selectedPath, function (loaded, total) {
+          showTransferProgress("正在打包下载整个文件夹", loaded, total);
+        }).then(function () {
+          showBanner("已下载完成整个文件夹", false);
         }).catch(function (err) {
           if (err.auth) return;
           showBanner(friendlyError(err), true);
@@ -871,7 +872,7 @@
     var dlBtns = content.querySelectorAll("[data-download]");
     Array.prototype.forEach.call(dlBtns, function (b) {
       b.addEventListener("click", function () {
-        downloadFile(b.getAttribute("data-download")).catch(function (err) {
+        downloadWithProgress(b.getAttribute("data-download")).catch(function (err) {
           if (!err.auth) showBanner(friendlyError(err), true);
         });
       });
@@ -926,7 +927,7 @@
       confirmTimer = null;
       confirmPath = null;
       refreshConfirmUI();
-      downloadFile(path).catch(function (err) {
+      downloadWithProgress(path).catch(function (err) {
         if (!err.auth) showBanner(friendlyError(err), true);
       });
       return;
@@ -950,9 +951,32 @@
     });
   }
 
+  /* 下载进度提示（节流显示，避免频繁刷新） */
+  var lastProgressTick = 0;
+  function showTransferProgress(label, loaded, total) {
+    var now = Date.now();
+    if (now - lastProgressTick < 300 && loaded < total) return;
+    lastProgressTick = now;
+    var pct = total ? Math.round((loaded / total) * 100) : 0;
+    statusBar.className = "status-bar";
+    statusText.textContent = label + "：" + fmtSize(loaded) + (total ? " / " + fmtSize(total) + "（" + pct + "%）" : "");
+    statusProgress.hidden = false;
+    statusProgressBar.style.width = pct + "%";
+  }
+
+  /* 单文件下载：显示进度，完成后提示 */
+  function downloadWithProgress(path) {
+    var name = fileName(path);
+    return downloadFile(path, function (loaded, total) {
+      showTransferProgress("正在下载「" + name + "」", loaded, total);
+    }).then(function () {
+      showBanner("已下载完成「" + name + "」", false);
+    });
+  }
+
   /* Koofr 支持把文件夹内选中的文件打包下载 */
-  function downloadFolderZip(folderPath) {
-    return batchDownloadZip(folderPath, []);
+  function downloadFolderZip(folderPath, onProgress) {
+    return batchDownloadZip(folderPath, [], onProgress);
   }
 
   /* 复位"下载整个文件夹"按钮的确认态与文案 */
@@ -979,10 +1003,12 @@
     showBanner("正在打包下载…", false);
     try {
       if (paths.length === 1) {
-        await downloadFile(paths[0]);
-        showBanner("已开始下载「" + fileName(paths[0]) + "」", false);
+        await downloadWithProgress(paths[0]);
+        showBanner("已下载完成「" + fileName(paths[0]) + "」", false);
       } else {
-        await batchDownloadZip(folderPath, paths.map(fileName));
+        await batchDownloadZip(folderPath, paths.map(fileName), function (loaded, total) {
+          showTransferProgress("正在打包下载", loaded, total);
+        });
         showBanner("已打包下载 " + paths.length + " 个文件", false);
       }
     } catch (err) {
@@ -990,7 +1016,7 @@
       showBanner("打包失败，改为逐个下载", true);
       var ok = 0;
       for (var i = 0; i < paths.length; i++) {
-        try { await downloadFile(paths[i]); ok++; } catch (e2) { if (e2.auth) return; }
+        try { await downloadWithProgress(paths[i]); ok++; } catch (e2) { if (e2.auth) return; }
         await new Promise(function (r) { setTimeout(r, 250); });
       }
       showBanner("已下载 " + ok + " 个文件", ok < paths.length);
@@ -1418,7 +1444,7 @@
 
   var GUIDE_SEEN_KEY = "club_tour_seen";
   var GUIDE_PROGRESS_KEY = "club_tour_progress";
-  var tourFolder = null;    /* 第 3 步进入的文件夹，供第 4-8 步返回使用 */
+  var tourFolder = null;    /* 第 4 步进入的文件夹，供第 5-9 步返回使用 */
   var tourRestore = null;   /* 进入教学前的状态快照 */
 
   var tourSteps = [
@@ -1433,7 +1459,12 @@
       targets: [".subject-grid"], view: "home"
     },
     {
-      id: 3, title: "最新资料更新",
+      id: 3, title: "状态栏",
+      text: "顶部是「状态栏」，显示提示或下载进度",
+      targets: ["#statusBar"], view: "home"
+    },
+    {
+      id: 4, title: "最新资料更新",
       text: "右侧是「最新资料更新」，点击资料进入资料页并定位该资料",
       targets: [".update-list"], view: "home", waitClick: true,
       done: function () {
@@ -1443,27 +1474,27 @@
       onComplete: function () { tourFolder = state.selectedPath; }
     },
     {
-      id: 4, title: "下载",
+      id: 5, title: "下载",
       text: "「下载」需两次点击：第一次确认，第二次下载",
       targets: ["[data-confirm-download]"], view: "folder"
     },
     {
-      id: 5, title: "批量勾选",
+      id: 6, title: "批量勾选",
       text: "勾选方框，可随后点击底部「批量下载」",
       targets: [".res-select"], view: "folder"
     },
     {
-      id: 6, title: "返回主页",
+      id: 7, title: "返回主页",
       text: "「返回主页」按钮或左上角「社团资源库」，都可回到主页",
       targets: ["[data-home]", "#brandTitle"], view: "folder"
     },
     {
-      id: 7, title: "切换目录",
+      id: 8, title: "切换目录",
       text: "点击左侧「目录」，切换查看其他文件夹",
       targets: [".sidebar"], view: "folder"
     },
     {
-      id: 8, title: "上传 / 下载切换",
+      id: 9, title: "上传 / 下载切换",
       text: "顶栏切换「上传/下载」模式",
       targets: ["#modeToggle"], view: "folder", waitClick: true,
       done: function () {
@@ -1471,17 +1502,17 @@
       }
     },
     {
-      id: 9, title: "选择目录",
+      id: 10, title: "选择目录",
       text: "上传前选择目标文件夹：左侧「目录」或「上传到」下拉框",
       targets: [".sidebar", "#folderSelect"], view: "upload"
     },
     {
-      id: 10, title: "新建文件夹",
+      id: 11, title: "新建文件夹",
       text: "或者点击「新建文件夹」，先创建目录",
       targets: ["#newFolderBtn"], view: "upload"
     },
     {
-      id: 11, title: "上传文件",
+      id: 12, title: "上传文件",
       text: "拖入或点击选择文件上传（无法选择文件夹）",
       targets: ["#uploadZone"], view: "upload"
     }
@@ -1489,8 +1520,8 @@
 
   /* 移动端（≤768px）：按手机特性生成引导步骤
    * - 第 1 步高亮顶栏「目录」图标，点击「下一步」后自动展开抽屉 0.5s
-   * - 第 7 步与第 1 步聚焦位置一致（高亮顶栏「目录」图标）
-   * - 第 9 步只指向「上传到」下拉框（抽屉会遮住它） */
+   * - 第 8 步与第 1 步聚焦位置一致（高亮顶栏「目录」图标）
+   * - 第 10 步只指向「上传到」下拉框（抽屉会遮住它） */
   function isMobileTour() {
     return window.matchMedia(MOBILE_MQ).matches;
   }
@@ -1516,18 +1547,18 @@
         };
       } else if (mobile && step.id === 2) {
         step.text = "中间是「文件夹卡片」，单击进入资料页";
-      } else if (mobile && step.id === 3) {
-        step.text = "底部为「最新资料更新」，点击进入资料页并定位该资料";
       } else if (mobile && step.id === 4) {
+        step.text = "底部为「最新资料更新」，点击进入资料页并定位该资料";
+      } else if (mobile && step.id === 5) {
         step.text = "「下载」需点击两次：第一次确认，第二次下载，防误触";
-      } else if (mobile && step.id === 6) {
-        step.text = "「返回主页」按钮或「左上角图标」都可返回主页";
       } else if (mobile && step.id === 7) {
+        step.text = "「返回主页」按钮或「左上角图标」都可返回主页";
+      } else if (mobile && step.id === 8) {
         step.targets = ["#treeToggle"];
         step.text = "资料页也要点击切换「目录」";
-      } else if (mobile && step.id === 8) {
-        step.text = "切换「上传/下载」模式";
       } else if (mobile && step.id === 9) {
+        step.text = "切换「上传/下载」模式";
+      } else if (mobile && step.id === 10) {
         step.targets = ["#folderSelect"];
         step.text = "上传前先选择目标文件夹";
       }
@@ -1580,7 +1611,7 @@
 
   /* 进入任一步骤前，恢复该步骤所需视图；第 1/7/9 步自动展开全部目录 */
   function ensureTourView(step) {
-    var needExpand = step.id === 1 || step.id === 7 || step.id === 9;
+    var needExpand = step.id === 1 || step.id === 8 || step.id === 10;
     var done = Promise.resolve();
     if (step.view === "upload") {
       if (state.mode !== "upload") switchMode("upload");

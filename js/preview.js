@@ -12,8 +12,18 @@ var TEXT_EXT = {
 var OFFICE_EXT = { docx: 1, xlsx: 1, pptx: 1 };
 var PREVIEW_EXT = Object.assign({ pdf: 1 }, IMAGE_EXT, VIDEO_EXT, AUDIO_EXT, TEXT_EXT, OFFICE_EXT);
 var previewObjectUrl = null;
+/* 各扩展名对应的 MIME 类型：确保 blob URL 能被浏览器正确识别渲染 */
+var PREVIEW_MIME = {
+  pdf: "application/pdf",
+  jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif",
+  webp: "image/webp", bmp: "image/bmp", svg: "image/svg+xml", ico: "image/x-icon",
+  avif: "image/avif", tif: "image/tiff", tiff: "image/tiff",
+  mp4: "video/mp4", webm: "video/webm", ogv: "video/ogg",
+  mp3: "audio/mpeg", wav: "audio/wav", flac: "audio/flac", aac: "audio/aac",
+  m4a: "audio/mp4", oga: "audio/ogg", ogg: "audio/ogg"
+};
 
-  /* ================= 预览 ================= */
+/* ================= 预览 ================= */
 
   /* Office 本地渲染：docx（docx-preview）、xlsx（SheetJS）、pptx（JSZip 提取文字） */
   function renderDocxPreview(container, blob) {
@@ -83,43 +93,65 @@ var previewObjectUrl = null;
   }
 
   async function previewFile(path) {
-    var res = await koofrFetch(getUrl(path, false), {}, NET_TIMEOUT);
-    if (!res.ok) throw new Error(await apiErrorText(res));
-    var blob = await withNetTimeout(res.blob(), NET_TIMEOUT);
-    var objUrl = URL.createObjectURL(blob);
-    previewObjectUrl = objUrl;
     var name = fileName(path);
     var ext = extOf(name);
-    var body;
-    var onRender = null;
-    if (ext === "pdf") {
-      body = '<iframe class="preview-frame" src="' + objUrl + '"></iframe>';
-    } else if (IMAGE_EXT[ext]) {
-      body = '<img class="preview-img" src="' + objUrl + '" alt="' + esc(name) + '">';
-    } else if (VIDEO_EXT[ext]) {
-      body = '<video class="preview-media" controls playsinline src="' + objUrl + '"></video>';
-    } else if (AUDIO_EXT[ext]) {
-      body = '<audio class="preview-audio" controls src="' + objUrl + '"></audio>';
-    } else if (OFFICE_EXT[ext]) {
-      body = '<div class="preview-office" id="officePreview"><div class="loading">正在解析…</div></div>';
-      onRender = function (modalEl) {
-        var container = modalEl.querySelector("#officePreview");
-        if (!container) return;
-        if (ext === "docx") renderDocxPreview(container, blob);
-        else if (ext === "xlsx") renderXlsxPreview(container, blob);
-        else renderPptxPreview(container, blob);
-      };
-    } else {
-      /* 文本/代码：截断过大内容后以等宽字体展示（转义防注入） */
-      var text = await blob.slice(0, 2097152).text();
-      if (blob.size > 2097152) text += "\n\n…（文件过大，仅显示前 2MB，可下载查看完整内容）";
-      body = '<pre class="preview-text">' + esc(text) + '</pre>';
-    }
     var action = await showModal({
-      title: fileName(path),
-      body: body,
+      title: name,
+      body: '<div class="preview-loading" id="previewLoading">' +
+        '<span class="preview-loading-text">正在加载预览…</span>' +
+        '<div class="progress"><div class="progress-bar"></div></div>' +
+        '<span class="preview-loading-pct"></span></div>',
       wide: true,
-      onRender: onRender,
+      onRender: function (modalEl) {
+        var holder = modalEl.querySelector("#previewLoading");
+        var bar = holder ? holder.querySelector(".progress-bar") : null;
+        var pctEl = holder ? holder.querySelector(".preview-loading-pct") : null;
+        fetchDownload(getUrl(path, false), {}, function (loaded, total) {
+          if (!holder || !holder.isConnected) return;
+          var pct = total ? Math.round((loaded / total) * 100) : 0;
+          if (bar) bar.style.width = pct + "%";
+          if (pctEl) pctEl.textContent = fmtSize(loaded) + (total ? " / " + fmtSize(total) + "（" + pct + "%）" : "");
+        }).then(async function (blob) {
+          if (!holder || !holder.isConnected) return;
+          /* 兜底：按扩展名强制正确 MIME，避免 PDF/媒体因类型缺失显示乱码 */
+          var wantType = PREVIEW_MIME[ext];
+          if (wantType && (!blob.type || blob.type === "application/octet-stream")) {
+            blob = new Blob([blob], { type: wantType });
+          }
+          var objUrl = URL.createObjectURL(blob);
+          previewObjectUrl = objUrl;
+          var bodyHtml;
+          if (ext === "pdf") {
+            bodyHtml = '<iframe class="preview-frame" src="' + objUrl + '"></iframe>';
+          } else if (IMAGE_EXT[ext]) {
+            bodyHtml = '<img class="preview-img" src="' + objUrl + '" alt="' + esc(name) + '">';
+          } else if (VIDEO_EXT[ext]) {
+            bodyHtml = '<video class="preview-media" controls playsinline src="' + objUrl + '"></video>';
+          } else if (AUDIO_EXT[ext]) {
+            bodyHtml = '<audio class="preview-audio" controls src="' + objUrl + '"></audio>';
+          } else if (OFFICE_EXT[ext]) {
+            bodyHtml = '<div class="preview-office" id="officePreview"><div class="loading">正在解析…</div></div>';
+          } else {
+            /* 文本/代码：截断过大内容后以等宽字体展示（转义防注入） */
+            var text = await blob.slice(0, 2097152).text();
+            if (blob.size > 2097152) text += "\n\n…（文件过大，仅显示前 2MB，可下载查看完整内容）";
+            bodyHtml = '<pre class="preview-text">' + esc(text) + '</pre>';
+          }
+          holder.outerHTML = bodyHtml;
+          if (OFFICE_EXT[ext]) {
+            var container = modalEl.querySelector("#officePreview");
+            if (!container) return;
+            if (ext === "docx") renderDocxPreview(container, blob);
+            else if (ext === "xlsx") renderXlsxPreview(container, blob);
+            else renderPptxPreview(container, blob);
+          }
+        }).catch(function (err) {
+          if (err && err.auth) return;
+          if (holder && holder.isConnected) {
+            holder.innerHTML = '<div class="preview-error">' + esc(friendlyError(err)) + '</div>';
+          }
+        });
+      },
       buttons: [
         { text: "下载", value: "download" },
         { text: "关闭", value: "close", primary: true }
@@ -128,7 +160,7 @@ var previewObjectUrl = null;
     if (previewObjectUrl) { URL.revokeObjectURL(previewObjectUrl); previewObjectUrl = null; }
     if (action === "download") {
       try {
-        await downloadFile(path);
+        await downloadWithProgress(path);
       } catch (err) {
         if (!err.auth) showBanner(friendlyError(err), true);
       }

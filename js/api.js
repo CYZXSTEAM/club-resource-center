@@ -20,35 +20,91 @@ function invalidatePath(path) {
 
 var memoryAuth = null;        /* 内存中的登录凭据，刷新即清 */
 
-/* 网络超时：预览/下载超过 10 秒无响应则自动中止 */
+/* 网络超时：预览/下载 10 秒内没有任何数据才自动中止（慢速但持续传输不中断） */
 var NET_TIMEOUT = 10000;
 var NET_TIMEOUT_MSG = "网络错误：请求超时（超过 10 秒无响应）";
 
-function fetchWithAbort(url, options, timeoutMs) {
-  if (typeof AbortController === "undefined") return fetch(url, options);
-  var ctrl = new AbortController();
-  var timer = setTimeout(function () { ctrl.abort(); }, timeoutMs || NET_TIMEOUT);
-  return fetch(url, Object.assign({}, options, { signal: ctrl.signal })).then(function (res) {
-    clearTimeout(timer);
-    return res;
-  }, function (err) {
-    clearTimeout(timer);
-    if (err && err.name === "AbortError") throw new Error(NET_TIMEOUT_MSG);
-    throw err;
-  });
-}
-
-function withNetTimeout(promise, timeoutMs) {
+function fetchDownload(url, options, onProgress, stallMs) {
   return new Promise(function (resolve, reject) {
-    var timer = setTimeout(function () {
-      reject(new Error(NET_TIMEOUT_MSG));
-    }, timeoutMs || NET_TIMEOUT);
-    promise.then(function (v) {
-      clearTimeout(timer);
+    var auth = getAuth();
+    if (!auth) {
+      showLogin("请先登录");
+      reject(authError());
+      return;
+    }
+    options = options || {};
+    var headers = Object.assign({ Authorization: "Basic " + auth.b64 }, options.headers || {});
+    var merged = Object.assign({}, options, { headers: headers });
+    var stall = stallMs || NET_TIMEOUT;
+    var lastActivity = Date.now();
+    var finished = false;
+    var ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    var checkTimer = null;
+
+    function fail(err) {
+      if (finished) return;
+      finished = true;
+      if (checkTimer) clearInterval(checkTimer);
+      if (ctrl) ctrl.abort();
+      reject(err);
+    }
+    function finish(v) {
+      if (finished) return;
+      finished = true;
+      if (checkTimer) clearInterval(checkTimer);
       resolve(v);
-    }, function (e) {
-      clearTimeout(timer);
-      reject(e);
+    }
+
+    if (ctrl) {
+      merged = Object.assign({}, merged, { signal: ctrl.signal });
+      checkTimer = setInterval(function () {
+        if (Date.now() - lastActivity > stall) fail(new Error(NET_TIMEOUT_MSG));
+      }, 1000);
+    }
+
+    fetch(url, merged).then(function (res) {
+      lastActivity = Date.now();
+      if (res.status === 401) {
+        clearAuth();
+        showLogin("邮箱或应用密码错误，或登录已过期，请重新登录");
+        fail(authError());
+        return;
+      }
+      if (!res.ok) {
+        fail(new Error("请求失败（" + res.status + "）"));
+        return;
+      }
+      var total = Number(res.headers.get("Content-Length")) || 0;
+      var loaded = 0;
+      var chunks = [];
+      var ctype = res.headers.get("Content-Type") || "";
+      if (!res.body || typeof res.body.getReader !== "function") {
+        res.blob().then(function (b) {
+          if (onProgress) onProgress(total || 1, total || 1);
+          finish(b);
+        }, fail);
+        return;
+      }
+      var reader = res.body.getReader();
+      (function pump() {
+        reader.read().then(function (r) {
+          lastActivity = Date.now();
+          if (r.done) {
+            finish(new Blob(chunks, { type: ctype }));
+            return;
+          }
+          chunks.push(r.value);
+          loaded += r.value.byteLength || r.value.length;
+          if (onProgress) onProgress(loaded, total);
+          pump();
+        }, function (err) {
+          if (err && err.name === "AbortError") fail(new Error(NET_TIMEOUT_MSG));
+          else fail(err);
+        });
+      })();
+    }, function (err) {
+      if (err && err.name === "AbortError") fail(new Error(NET_TIMEOUT_MSG));
+      else fail(err);
     });
   });
 }
@@ -76,7 +132,7 @@ function withNetTimeout(promise, timeoutMs) {
 
   /* ================= Koofr API ================= */
 
-  async function koofrFetch(url, options, timeoutMs) {
+  async function koofrFetch(url, options) {
     var auth = getAuth();
     if (!auth) {
       showLogin("请先登录");
@@ -84,8 +140,7 @@ function withNetTimeout(promise, timeoutMs) {
     }
     options = options || {};
     var headers = Object.assign({ Authorization: "Basic " + auth.b64 }, options.headers || {});
-    var merged = Object.assign({}, options, { headers: headers });
-    var res = timeoutMs ? await fetchWithAbort(url, merged, timeoutMs) : await fetch(url, merged);
+    var res = await fetch(url, Object.assign({}, options, { headers: headers }));
     if (res.status === 401) {
       clearAuth();
       showLogin("邮箱或应用密码错误，或登录已过期，请重新登录");
@@ -232,10 +287,8 @@ function withNetTimeout(promise, timeoutMs) {
     });
   }
 
-  async function downloadFile(path) {
-    var res = await koofrFetch(getUrl(path, true), {}, NET_TIMEOUT);
-    if (!res.ok) throw new Error(await apiErrorText(res));
-    var blob = await withNetTimeout(res.blob(), NET_TIMEOUT);
+  async function downloadFile(path, onProgress) {
+    var blob = await fetchDownload(getUrl(path, true), {}, onProgress);
     var a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = fileName(path);
@@ -245,16 +298,14 @@ function withNetTimeout(promise, timeoutMs) {
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 60000);
   }
 
-  async function batchDownloadZip(folderPath, names) {
+  async function batchDownloadZip(folderPath, names, onProgress) {
     var url = BASE + "/content/api/v2.1/mounts/" + encodeURIComponent(MOUNT) + "/files/get?path=" +
       encodePath(folderPath) + "&force=true";
-    var res = await koofrFetch(url, {
+    var blob = await fetchDownload(url, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: names.map(function (n) { return "files=" + encodeURIComponent(n); }).join("&")
-    }, NET_TIMEOUT);
-    if (!res.ok) throw new Error(await apiErrorText(res));
-    var blob = await withNetTimeout(res.blob(), NET_TIMEOUT);
+    }, onProgress);
     var a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = fileName(folderPath) + ".zip";

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>社团资源库</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='24' fill='%235E6AD2'/><rect x='17' y='20' width='66' height='16' rx='5' fill='%23FFFFFF'/><rect x='17' y='42' width='66' height='16' rx='5' fill='%23FFFFFF' opacity='.85'/><rect x='17' y='64' width='66' height='16' rx='5' fill='%23FFFFFF' opacity='.7'/></svg>">
-  <link rel="stylesheet" href="style.css?v=20">
+  <link rel="stylesheet" href="style.css?v=32">
 </head>
 <body>
   <header class="topbar">
@@ -86,7 +86,13 @@
 
     <!-- 主界面 -->
     <section id="mainView" hidden>
-      <div id="banner" class="banner" hidden><span id="bannerText"></span></div>
+      <!-- 状态栏：显示提示信息与下载进度（原横幅位置） -->
+      <div id="statusBar" class="status-bar">
+        <span id="statusText">状态栏：当前为空</span>
+        <div class="status-progress" id="statusProgress" hidden>
+          <div class="progress"><div class="progress-bar" id="statusProgressBar"></div></div>
+        </div>
+      </div>
       <div class="layout">
         <div id="sidebarMask" class="sidebar-mask" hidden></div>
         <aside class="sidebar" id="sidebar">
@@ -133,15 +139,15 @@
 
   <div id="modalRoot"></div>
 
-  <script src="js/config.js?v=23"></script>
-  <script src="js/pinyin.js?v=23"></script>
-  <script src="js/jszip.js?v=23"></script>
-  <script src="js/docx-preview.js?v=23"></script>
-  <script src="js/xlsx.js?v=23"></script>
-  <script src="js/api.js?v=23"></script>
-  <script src="js/search.js?v=23"></script>
-  <script src="js/preview.js?v=23"></script>
-  <script src="js/guide.js?v=23"></script>
-  <script src="js/app.js?v=23"></script>
+  <script src="js/config.js?v=31"></script>
+  <script src="js/pinyin.js?v=31"></script>
+  <script src="js/jszip.js?v=31"></script>
+  <script src="js/docx-preview.js?v=31"></script>
+  <script src="js/xlsx.js?v=31"></script>
+  <script src="js/api.js?v=31"></script>
+  <script src="js/search.js?v=31"></script>
+  <script src="js/preview.js?v=31"></script>
+  <script src="js/guide.js?v=31"></script>
+  <script src="js/app.js?v=32"></script>
 </body>
 </html>
